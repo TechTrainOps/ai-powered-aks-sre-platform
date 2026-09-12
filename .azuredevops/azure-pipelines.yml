@@ -270,17 +270,39 @@ stages:
     # Export Terraform Outputs
     # --------------------------------------------------------
 
-    - task: PowerShell@2
+    - task: AzureCLI@2
       displayName: "Export Terraform Outputs"
       inputs:
-        targetType: "inline"
+        azureSubscription: "$(azureServiceConnection)"
+        addSpnToEnvironment: true
+        scriptType: "ps"
+        scriptLocation: "inlineScript"
         workingDirectory: '$(Build.SourcesDirectory)\infra'
-        script: |
+        inlineScript: |
           $ErrorActionPreference = "Stop"
+
+          $subscriptionId = az account show `
+            --query "id" `
+            -o tsv
+
+          $env:TF_VAR_subscription_id = $subscriptionId
+
+          $env:ARM_USE_OIDC = "true"
+          $env:ARM_USE_AZUREAD = "true"
+
+          $env:ARM_CLIENT_ID = $env:servicePrincipalId
+          $env:ARM_TENANT_ID = $env:tenantId
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+
+          Write-Host "Exporting Terraform outputs..."
 
           $outputFile = "$(Build.ArtifactStagingDirectory)\terraform-outputs.json"
 
           $terraformOutput = terraform output -json
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "terraform output failed with exit code $LASTEXITCODE"
+          }
 
           [System.IO.File]::WriteAllText(
             $outputFile,
@@ -288,7 +310,8 @@ stages:
             [System.Text.UTF8Encoding]::new($false)
           )
 
-          Write-Host "Terraform outputs exported to $outputFile"
+          Write-Host "Terraform outputs exported to:"
+          Write-Host $outputFile
 
     # --------------------------------------------------------
     # Publish Terraform Outputs
