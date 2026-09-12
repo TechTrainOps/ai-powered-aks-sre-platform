@@ -23,6 +23,7 @@ stages:
       name: "MultiOSPool"
 
     steps:
+
     - checkout: self
       displayName: "Checkout source"
 
@@ -31,6 +32,10 @@ stages:
       inputs:
         terraformVersion: "$(terraformVersion)"
 
+    # --------------------------------------------------------
+    # Terraform Init
+    # --------------------------------------------------------
+
     - task: AzureCLI@2
       displayName: "Terraform Init"
       inputs:
@@ -38,7 +43,7 @@ stages:
         addSpnToEnvironment: true
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
@@ -53,31 +58,41 @@ stages:
 
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
-            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform init -input=false
+
+    # --------------------------------------------------------
+    # Terraform Format
+    # --------------------------------------------------------
 
     - task: PowerShell@2
       displayName: "Terraform Format Check"
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         script: |
           $ErrorActionPreference = "Stop"
 
           terraform fmt -check -recursive
 
+    # --------------------------------------------------------
+    # Terraform Validate
+    # --------------------------------------------------------
+
     - task: PowerShell@2
       displayName: "Terraform Validate"
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         script: |
           $ErrorActionPreference = "Stop"
 
           terraform validate
+
+    # --------------------------------------------------------
+    # Terraform Plan
+    # --------------------------------------------------------
 
     - task: AzureCLI@2
       displayName: "Terraform Plan"
@@ -86,7 +101,7 @@ stages:
         addSpnToEnvironment: true
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
@@ -101,18 +116,20 @@ stages:
 
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
-            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform plan `
             -input=false `
             -out="$(Build.ArtifactStagingDirectory)\tfplan"
 
+    # --------------------------------------------------------
+    # Publish Terraform Plan
+    # --------------------------------------------------------
+
     - task: PublishPipelineArtifact@1
       displayName: "Publish Terraform Plan"
       inputs:
-        targetPath: "$(Build.ArtifactStagingDirectory)\tfplan"
+        targetPath: '$(Build.ArtifactStagingDirectory)\tfplan'
         artifact: "terraform-plan"
         publishLocation: "pipeline"
 
@@ -130,6 +147,11 @@ stages:
   condition: succeeded()
 
   jobs:
+
+  # ----------------------------------------------------------
+  # Manual approval
+  # ----------------------------------------------------------
+
   - job: Approval
     displayName: "Infrastructure Approval"
 
@@ -147,6 +169,10 @@ stages:
           Approve to apply the reviewed infrastructure changes.
         onTimeout: "reject"
 
+  # ----------------------------------------------------------
+  # Terraform Apply
+  # ----------------------------------------------------------
+
   - job: Apply
     displayName: "Terraform Apply"
 
@@ -159,6 +185,7 @@ stages:
       name: "MultiOSPool"
 
     steps:
+
     - checkout: self
       displayName: "Checkout source"
 
@@ -167,11 +194,19 @@ stages:
       inputs:
         terraformVersion: "$(terraformVersion)"
 
+    # --------------------------------------------------------
+    # Download Terraform Plan
+    # --------------------------------------------------------
+
     - task: DownloadPipelineArtifact@2
       displayName: "Download Terraform Plan"
       inputs:
         artifact: "terraform-plan"
-        path: "$(Pipeline.Workspace)\terraform-plan"
+        path: '$(Pipeline.Workspace)\terraform-plan'
+
+    # --------------------------------------------------------
+    # Terraform Init
+    # --------------------------------------------------------
 
     - task: AzureCLI@2
       displayName: "Terraform Init"
@@ -180,7 +215,7 @@ stages:
         addSpnToEnvironment: true
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
@@ -195,11 +230,13 @@ stages:
 
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
-            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform init -input=false
+
+    # --------------------------------------------------------
+    # Terraform Apply
+    # --------------------------------------------------------
 
     - task: AzureCLI@2
       displayName: "Terraform Apply"
@@ -208,7 +245,7 @@ stages:
         addSpnToEnvironment: true
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
@@ -223,37 +260,50 @@ stages:
 
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
-            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform apply `
             -input=false `
             "$(Pipeline.Workspace)\terraform-plan\tfplan"
 
+    # --------------------------------------------------------
+    # Export Terraform Outputs
+    # --------------------------------------------------------
+
     - task: PowerShell@2
       displayName: "Export Terraform Outputs"
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)\infra"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
         script: |
           $ErrorActionPreference = "Stop"
 
-          terraform output -json |
-            Out-File `
-              "$(Build.ArtifactStagingDirectory)\terraform-outputs.json" `
-              -Encoding utf8
+          $outputFile = "$(Build.ArtifactStagingDirectory)\terraform-outputs.json"
+
+          $terraformOutput = terraform output -json
+
+          [System.IO.File]::WriteAllText(
+            $outputFile,
+            $terraformOutput,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          Write-Host "Terraform outputs exported to $outputFile"
+
+    # --------------------------------------------------------
+    # Publish Terraform Outputs
+    # --------------------------------------------------------
 
     - task: PublishPipelineArtifact@1
       displayName: "Publish Terraform Outputs"
       inputs:
-        targetPath: "$(Build.ArtifactStagingDirectory)\terraform-outputs.json"
+        targetPath: '$(Build.ArtifactStagingDirectory)\terraform-outputs.json'
         artifact: "terraform-outputs"
         publishLocation: "pipeline"
 
 
 # ============================================================
-# 3. PYTHON TEST
+# 3. APPLICATION TESTS
 # ============================================================
 
 - stage: ApplicationTests
@@ -265,6 +315,7 @@ stages:
   condition: succeeded()
 
   jobs:
+
   - job: Test
     displayName: "Run Application Tests"
 
@@ -272,6 +323,7 @@ stages:
       vmImage: "ubuntu-latest"
 
     steps:
+
     - checkout: self
 
     - task: UsePythonVersion@0
@@ -286,6 +338,7 @@ stages:
 
         python -m pip install --upgrade pip
         python -m pip install -r requirements.txt
+
         python -m pytest -v
 
       displayName: "Run pytest"
@@ -305,6 +358,7 @@ stages:
   condition: succeeded()
 
   jobs:
+
   - job: Build
     displayName: "Build sre-api"
 
@@ -312,10 +366,11 @@ stages:
       vmImage: "ubuntu-latest"
 
     steps:
+
     - checkout: self
 
     # --------------------------------------------------------
-    # Read Terraform outputs
+    # Download Terraform Outputs
     # --------------------------------------------------------
 
     - task: DownloadPipelineArtifact@2
@@ -324,6 +379,10 @@ stages:
         artifact: "terraform-outputs"
         path: "$(Pipeline.Workspace)/terraform-outputs"
 
+    # --------------------------------------------------------
+    # Read ACR details
+    # --------------------------------------------------------
+
     - bash: |
         set -euo pipefail
 
@@ -331,12 +390,16 @@ stages:
 
         ACR_NAME=$(python -c "
         import json
-        print(json.load(open('$OUTPUT_FILE'))['acr_name']['value'])
+        with open('$OUTPUT_FILE', encoding='utf-8-sig') as f:
+            data = json.load(f)
+        print(data['acr_name']['value'])
         ")
 
         ACR_LOGIN_SERVER=$(python -c "
         import json
-        print(json.load(open('$OUTPUT_FILE'))['acr_login_server']['value'])
+        with open('$OUTPUT_FILE', encoding='utf-8-sig') as f:
+            data = json.load(f)
+        print(data['acr_login_server']['value'])
         ")
 
         echo "ACR: $ACR_NAME"
@@ -348,7 +411,7 @@ stages:
       displayName: "Read ACR details"
 
     # --------------------------------------------------------
-    # Build
+    # Docker Build
     # --------------------------------------------------------
 
     - bash: |
@@ -364,7 +427,7 @@ stages:
       displayName: "Build Docker image"
 
     # --------------------------------------------------------
-    # Trivy
+    # Trivy Security Scan
     # --------------------------------------------------------
 
     - bash: |
@@ -395,7 +458,7 @@ stages:
       displayName: "Security scan"
 
     # --------------------------------------------------------
-    # Login ACR
+    # Login to ACR
     # --------------------------------------------------------
 
     - task: AzureCLI@2
@@ -411,7 +474,7 @@ stages:
           az acr login --name "$(acrName)"
 
     # --------------------------------------------------------
-    # Push
+    # Push Image
     # --------------------------------------------------------
 
     - bash: |
@@ -433,7 +496,13 @@ stages:
 - stage: HelmValidation
   displayName: "Validate Helm Chart"
 
+  dependsOn:
+  - ContainerBuild
+
+  condition: succeeded()
+
   jobs:
+
   - job: Helm
     displayName: "Helm Lint and Template"
 
@@ -441,28 +510,119 @@ stages:
       name: "MultiOSPool"
 
     steps:
+
     - checkout: self
+
+    # --------------------------------------------------------
+    # Install Helm
+    # --------------------------------------------------------
 
     - task: HelmInstaller@1
       displayName: "Install Helm"
       inputs:
         helmVersionToInstall: "latest"
 
-    - powershell: |
-        $ErrorActionPreference = "Stop"
+    # --------------------------------------------------------
+    # Download Terraform Outputs
+    # --------------------------------------------------------
 
-        helm version
+    - task: DownloadPipelineArtifact@2
+      displayName: "Download Terraform Outputs"
+      inputs:
+        artifact: "terraform-outputs"
+        path: '$(Pipeline.Workspace)\terraform-outputs'
 
-        helm lint .\charts\sre-api
+    # --------------------------------------------------------
+    # Read ACR information
+    # --------------------------------------------------------
 
-        helm template sre-api .\charts\sre-api `
-          --namespace sre `
-          --set image.repository="acrakssreqtyn6.azurecr.io/sre-api" `
-          --set image.tag="test" `
-          --set collector.enabled=false `
-          --set analyser.enabled=false
+    - task: PowerShell@2
+      displayName: "Read ACR details"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
 
-      displayName: "Lint and render Helm chart"
+          $outputFile = "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+
+          $outputs = Get-Content $outputFile -Raw |
+            ConvertFrom-Json
+
+          $acrLoginServer = $outputs.acr_login_server.value
+
+          Write-Host "ACR Login Server: $acrLoginServer"
+
+          Write-Host "##vso[task.setvariable variable=acrLoginServer]$acrLoginServer"
+
+    # --------------------------------------------------------
+    # Helm Version
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "Check Helm version"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          helm version
+
+    # --------------------------------------------------------
+    # Helm Lint
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "Helm Lint"
+      inputs:
+        targetType: "inline"
+        workingDirectory: '$(Build.SourcesDirectory)'
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          helm lint .\charts\sre-api `
+            --set image.repository="$(acrLoginServer)/sre-api" `
+            --set image.tag="$(Build.BuildId)" `
+            --set collector.enabled=false `
+            --set analyser.enabled=false
+
+    # --------------------------------------------------------
+    # Helm Template Validation
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "Helm Template Validation"
+      inputs:
+        targetType: "inline"
+        workingDirectory: '$(Build.SourcesDirectory)'
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          $renderedFile = "$(Build.ArtifactStagingDirectory)\rendered-manifest.yaml"
+
+          helm template sre-api .\charts\sre-api `
+            --namespace "$(namespace)" `
+            --set image.repository="$(acrLoginServer)/sre-api" `
+            --set image.tag="$(Build.BuildId)" `
+            --set collector.enabled=false `
+            --set analyser.enabled=false `
+            --output-dir "$(Build.ArtifactStagingDirectory)\helm-rendered"
+
+          Write-Host "Helm chart rendered successfully."
+
+          Get-ChildItem `
+            "$(Build.ArtifactStagingDirectory)\helm-rendered" `
+            -Recurse
+
+    # --------------------------------------------------------
+    # Publish rendered Helm manifests
+    # --------------------------------------------------------
+
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish Helm Rendered Manifests"
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)\helm-rendered'
+        artifact: "helm-rendered"
+        publishLocation: "pipeline"
 
 
 # ============================================================
@@ -474,10 +634,12 @@ stages:
 
   dependsOn:
   - ContainerBuild
+  - HelmValidation
 
   condition: succeeded()
 
   jobs:
+
   - job: Deploy
     displayName: "Deploy sre-api"
 
@@ -485,18 +647,31 @@ stages:
       name: "MultiOSPool"
 
     steps:
+
     - checkout: self
+
+    # --------------------------------------------------------
+    # Download Terraform Outputs
+    # --------------------------------------------------------
 
     - task: DownloadPipelineArtifact@2
       displayName: "Download Terraform Outputs"
       inputs:
         artifact: "terraform-outputs"
-        path: "$(Pipeline.Workspace)\terraform-outputs"
+        path: '$(Pipeline.Workspace)\terraform-outputs'
+
+    # --------------------------------------------------------
+    # Install Helm
+    # --------------------------------------------------------
 
     - task: HelmInstaller@1
       displayName: "Install Helm"
       inputs:
         helmVersionToInstall: "latest"
+
+    # --------------------------------------------------------
+    # Configure AKS
+    # --------------------------------------------------------
 
     - task: AzureCLI@2
       displayName: "Configure AKS"
@@ -508,17 +683,16 @@ stages:
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
-          $outputFile =
-            "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+          $outputFile = "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
 
-          $outputs = Get-Content $outputFile |
+          $outputs = Get-Content $outputFile -Raw |
             ConvertFrom-Json
 
-          $resourceGroup =
-            $outputs.resource_group_name.value
+          $resourceGroup = $outputs.resource_group_name.value
+          $aksName = $outputs.aks_name.value
 
-          $aksName =
-            $outputs.aks_name.value
+          Write-Host "Resource Group: $resourceGroup"
+          Write-Host "AKS Cluster: $aksName"
 
           az aks get-credentials `
             --resource-group $resourceGroup `
@@ -528,66 +702,74 @@ stages:
           kubectl get nodes
 
     # --------------------------------------------------------
-    # Helm lint
+    # Read ACR details
     # --------------------------------------------------------
 
     - task: PowerShell@2
-      displayName: "Helm Lint"
+      displayName: "Read ACR details"
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)"
         script: |
           $ErrorActionPreference = "Stop"
 
-          helm lint .\charts\sre-api
+          $outputFile = "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+
+          $outputs = Get-Content $outputFile -Raw |
+            ConvertFrom-Json
+
+          $acrLoginServer = $outputs.acr_login_server.value
+
+          Write-Host "ACR Login Server: $acrLoginServer"
+
+          Write-Host "##vso[task.setvariable variable=acrLoginServer]$acrLoginServer"
 
     # --------------------------------------------------------
-    # Helm template
-    # --------------------------------------------------------
-
-    - task: PowerShell@2
-      displayName: "Helm Template Validation"
-      inputs:
-        targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)"
-        script: |
-          $ErrorActionPreference = "Stop"
-
-          helm template sre-api .\charts\sre-api `
-            --namespace $(namespace) `
-            --set image.repository="example.azurecr.io/sre-api" `
-            --set image.tag="$(Build.BuildId)"
-
-    # --------------------------------------------------------
-    # Deploy
+    # Helm Deploy
     # --------------------------------------------------------
 
     - task: PowerShell@2
       displayName: "Helm Deploy"
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)"
+        workingDirectory: '$(Build.SourcesDirectory)'
         script: |
           $ErrorActionPreference = "Stop"
 
-          $outputFile =
-            "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
-
-          $outputs = Get-Content $outputFile |
-            ConvertFrom-Json
-
-          $acrLoginServer =
-            $outputs.acr_login_server.value
+          Write-Host "Deploying image:"
+          Write-Host "$(acrLoginServer)/sre-api:$(Build.BuildId)"
 
           helm upgrade --install sre-api .\charts\sre-api `
-            --namespace $(namespace) `
+            --namespace "$(namespace)" `
             --create-namespace `
-            --set image.repository="$acrLoginServer/sre-api" `
+            --set image.repository="$(acrLoginServer)/sre-api" `
             --set image.tag="$(Build.BuildId)" `
             --set collector.enabled=false `
             --set analyser.enabled=false `
             --wait `
             --timeout 10m
+
+          Write-Host "Helm deployment completed successfully."
+
+    # --------------------------------------------------------
+    # Deployment Status
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "Validate deployment rollout"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          kubectl rollout status `
+            deployment/sre-api `
+            -n "$(namespace)" `
+            --timeout=300s
+
+          kubectl get pods -n "$(namespace)"
+
+          kubectl get deployment sre-api `
+            -n "$(namespace)"
 
 
 # ============================================================
@@ -603,6 +785,7 @@ stages:
   condition: succeeded()
 
   jobs:
+
   - job: Smoke
     displayName: "Validate sre-api"
 
@@ -610,13 +793,22 @@ stages:
       name: "MultiOSPool"
 
     steps:
+
     - checkout: self
+
+    # --------------------------------------------------------
+    # Download Terraform Outputs
+    # --------------------------------------------------------
 
     - task: DownloadPipelineArtifact@2
       displayName: "Download Terraform Outputs"
       inputs:
         artifact: "terraform-outputs"
-        path: "$(Pipeline.Workspace)\terraform-outputs"
+        path: '$(Pipeline.Workspace)\terraform-outputs'
+
+    # --------------------------------------------------------
+    # Configure AKS
+    # --------------------------------------------------------
 
     - task: AzureCLI@2
       displayName: "Configure AKS"
@@ -628,22 +820,22 @@ stages:
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
-          $outputFile =
-            "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+          $outputFile = "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
 
-          $outputs = Get-Content $outputFile |
+          $outputs = Get-Content $outputFile -Raw |
             ConvertFrom-Json
 
-          $resourceGroup =
-            $outputs.resource_group_name.value
-
-          $aksName =
-            $outputs.aks_name.value
+          $resourceGroup = $outputs.resource_group_name.value
+          $aksName = $outputs.aks_name.value
 
           az aks get-credentials `
             --resource-group $resourceGroup `
             --name $aksName `
             --overwrite-existing
+
+    # --------------------------------------------------------
+    # Kubernetes Validation
+    # --------------------------------------------------------
 
     - task: PowerShell@2
       displayName: "Validate Kubernetes deployment"
@@ -652,21 +844,146 @@ stages:
         script: |
           $ErrorActionPreference = "Stop"
 
-          kubectl get nodes
+          Write-Host "================================================"
+          Write-Host "Kubernetes Nodes"
+          Write-Host "================================================"
+
+          kubectl get nodes -o wide
+
+          Write-Host "================================================"
+          Write-Host "Pods"
+          Write-Host "================================================"
 
           kubectl get pods `
-            -n $(namespace)
+            -n "$(namespace)" `
+            -o wide
+
+          Write-Host "================================================"
+          Write-Host "Deployment"
+          Write-Host "================================================"
 
           kubectl get deployment sre-api `
-            -n $(namespace)
+            -n "$(namespace)"
+
+          Write-Host "================================================"
+          Write-Host "HPA"
+          Write-Host "================================================"
 
           kubectl get hpa sre-api `
-            -n $(namespace)
+            -n "$(namespace)"
+
+          Write-Host "================================================"
+          Write-Host "PDB"
+          Write-Host "================================================"
 
           kubectl get pdb sre-api `
-            -n $(namespace)
+            -n "$(namespace)"
+
+          Write-Host "================================================"
+          Write-Host "Rollout Status"
+          Write-Host "================================================"
 
           kubectl rollout status `
             deployment/sre-api `
-            -n $(namespace) `
+            -n "$(namespace)" `
             --timeout=300s
+
+    # --------------------------------------------------------
+    # Service Validation
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "Validate Kubernetes service"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          kubectl get service sre-api `
+            -n "$(namespace)"
+
+          kubectl get endpoints sre-api `
+            -n "$(namespace)"
+
+    # --------------------------------------------------------
+    # Application Smoke Test
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "Application smoke test"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Starting temporary port-forward..."
+
+          $process = Start-Process `
+            -FilePath "kubectl" `
+            -ArgumentList @(
+              "port-forward",
+              "service/sre-api",
+              "8000:8000",
+              "-n",
+              "$(namespace)"
+            ) `
+            -PassThru `
+            -WindowStyle Hidden
+
+          try {
+
+            Start-Sleep -Seconds 10
+
+            Write-Host "Testing /healthz"
+
+            $health = Invoke-RestMethod `
+              -Uri "http://127.0.0.1:8000/healthz" `
+              -Method Get
+
+            Write-Host "Health response:"
+            $health | ConvertTo-Json
+
+            if ($health.status -ne "healthy") {
+              throw "Health check failed."
+            }
+
+            Write-Host "Testing /readyz"
+
+            $ready = Invoke-RestMethod `
+              -Uri "http://127.0.0.1:8000/readyz" `
+              -Method Get
+
+            Write-Host "Readiness response:"
+            $ready | ConvertTo-Json
+
+            if ($ready.status -ne "ready") {
+              throw "Readiness check failed."
+            }
+
+            Write-Host "Testing /metrics"
+
+            $metrics = Invoke-WebRequest `
+              -Uri "http://127.0.0.1:8000/metrics" `
+              -Method Get
+
+            if ($metrics.StatusCode -ne 200) {
+              throw "Metrics endpoint returned HTTP $($metrics.StatusCode)"
+            }
+
+            if ($metrics.Content -notmatch "http_requests_total") {
+              throw "Expected Prometheus metric not found."
+            }
+
+            Write-Host "Application smoke tests passed."
+
+          }
+          finally {
+
+            if ($process -and -not $process.HasExited) {
+              Stop-Process `
+                -Id $process.Id `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+
+          }
