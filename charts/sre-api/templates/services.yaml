@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-api
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.service.type }}
+  selector: {app: sre-api}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incident-collector
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.collectorService.type }}
+  selector: {app: incident-collector}
+  ports:
+    - port: {{ .Values.collectorService.port }}
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-analyser
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.analyserService.type }}
+  selector: {app: ai-analyser}
+  ports:
+    - port: {{ .Values.analyserService.port }}
+      targetPort: 8080

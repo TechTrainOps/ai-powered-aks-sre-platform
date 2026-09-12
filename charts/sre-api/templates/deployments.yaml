@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-api
+  namespace: {{ .Values.namespace }}
+  labels: {app: sre-api}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {app: sre-api}
+  template:
+    metadata:
+      labels: {app: sre-api}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: sre-api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{containerPort: 8000}]
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-collector
+  namespace: {{ .Values.namespace }}
+  labels: {app: incident-collector}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: incident-collector}
+  template:
+    metadata:
+      labels: {app: incident-collector}
+      annotations:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: incident-collector
+      containers:
+        - name: incident-collector
+          image: "{{ .Values.collectorImage.repository }}:{{ .Values.collectorImage.tag }}"
+          ports: [{containerPort: 8080}]
+          env:
+            - name: LOG_WORKSPACE_ID
+              value: {{ .Values.azure.logWorkspaceId | quote }}
+            - name: AI_ANALYSER_URL
+              value: http://ai-analyser:8080
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          livenessProbe: {httpGet: {path: /healthz, port: 8080}}
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-analyser
+  namespace: {{ .Values.namespace }}
+  labels: {app: ai-analyser}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: ai-analyser}
+  template:
+    metadata:
+      labels: {app: ai-analyser}
+      annotations:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: ai-analyser
+      containers:
+        - name: ai-analyser
+          image: "{{ .Values.analyserImage.repository }}:{{ .Values.analyserImage.tag }}"
+          ports: [{containerPort: 8080}]
+          env:
+            - name: AZURE_OPENAI_ENDPOINT
+              value: {{ .Values.azure.openaiEndpoint | quote }}
+            - name: AZURE_OPENAI_DEPLOYMENT
+              value: {{ .Values.azure.openaiDeployment | quote }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          livenessProbe: {httpGet: {path: /healthz, port: 8080}}
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}}

@@ -1,0 +1,8 @@
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "eastus2"
+resource_prefix = "aks-sre"
+project_name    = "ai-sre"
+
+# Check Azure OpenAI model availability in your region/resource before deployment.
+openai_model_name    = "gpt-4.1-mini"
+openai_model_version = "2025-04-14"
