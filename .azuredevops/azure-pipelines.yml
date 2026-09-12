@@ -275,14 +275,24 @@ steps:
       $ErrorActionPreference = "Stop"
       terraform fmt -check -recursive
 
-- task: PowerShell@2
+- task: AzureCLI@2
   displayName: "Terraform Validate"
   inputs:
-    targetType: "inline"
+    azureSubscription: "$(azureServiceConnection)"
+    addSpnToEnvironment: true
+    scriptType: "ps"
+    scriptLocation: "inlineScript"
     workingDirectory: "$(Build.SourcesDirectory)/infra"
-    script: |
+    inlineScript: |
       $ErrorActionPreference = "Stop"
-      terraform validate      
+
+      $subscriptionId = az account show --query "id" -o tsv
+
+      Write-Host "Validating Terraform configuration..."
+
+      $env:TF_VAR_subscription_id = $subscriptionId
+
+      terraform validate    
 
 - task: AzureCLI@2
   displayName: "Terraform Plan"
@@ -295,9 +305,18 @@ steps:
     inlineScript: |
       $ErrorActionPreference = "Stop"
 
+      Write-Host "========================================="
+      Write-Host "Terraform Plan"
+      Write-Host "========================================="
+
+      $subscriptionId = az account show --query "id" -o tsv
+
+      Write-Host "Subscription: $subscriptionId"
+
+      $env:TF_VAR_subscription_id = $subscriptionId
       $env:ARM_USE_OIDC = "true"
       $env:ARM_USE_AZUREAD = "true"
 
       terraform plan `
         -input=false `
-        -out="$(Build.ArtifactStagingDirectory)/tfplan"      
+        -out="$(Build.ArtifactStagingDirectory)/tfplan"   
