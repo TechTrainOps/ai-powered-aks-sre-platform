@@ -98,6 +98,7 @@ resource "azurerm_cognitive_account" "openai" {
   sku_name                      = "S0"
   custom_subdomain_name         = local.openai_name
   public_network_access_enabled = true
+  local_auth_enabled            = false
   identity {
     type = "SystemAssigned"
   }
@@ -128,14 +129,20 @@ resource "azurerm_kubernetes_cluster" "aks" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
-  default_node_pool {
-    name            = "system"
-    vm_size         = "Standard_D4ds_v6"
-    node_count      = 2
-    os_disk_size_gb = 80
-    vnet_subnet_id  = azurerm_subnet.aks.id
-    type            = "VirtualMachineScaleSets"
+default_node_pool {
+  name            = "system"
+  vm_size         = "Standard_D4ds_v6"
+  node_count      = 2
+  os_disk_size_gb = 80
+  vnet_subnet_id  = azurerm_subnet.aks.id
+  type            = "VirtualMachineScaleSets"
+
+  upgrade_settings {
+    drain_timeout_in_minutes      = 0
+    max_surge                     = "10%"
+    node_soak_duration_in_minutes = 0
   }
+}
 
   identity {
     type = "SystemAssigned"
