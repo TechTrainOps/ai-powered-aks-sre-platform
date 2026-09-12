@@ -5,6 +5,7 @@ terraform {
     container_name       = "tfstate"
     key                  = "ai-aks-sre.tfstate"
 
+    use_oidc         = true
     use_azuread_auth = true
   }
 }
