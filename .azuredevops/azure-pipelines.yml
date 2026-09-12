@@ -216,7 +216,7 @@ steps:
     addSpnToEnvironment: true
     scriptType: "ps"
     scriptLocation: "inlineScript"
-    workingDirectory: "$(Build.SourcesDirectory)\infra"
+    workingDirectory: "$(Build.SourcesDirectory)/infra"
     inlineScript: |
       $ErrorActionPreference = "Stop"
 
