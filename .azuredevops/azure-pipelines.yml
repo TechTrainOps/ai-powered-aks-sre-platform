@@ -1,13 +1,18 @@
 trigger: none
 
-pool:
-  name: "MultiOSPool"
-
 variables:
   terraformVersion: "1.11.2"
   azureServiceConnection: "sc-azure-ai-aks-sre"
 
+  imageName: "sre-api"
+  namespace: "sre"
+
+
 stages:
+
+# ============================================================
+# 1. TERRAFORM PLAN
+# ============================================================
 
 - stage: TerraformPlan
   displayName: "Terraform Plan"
@@ -15,139 +20,181 @@ stages:
   jobs:
 
   - job: Plan
-    displayName: "Terraform Plan"
+
+    pool:
+      name: "MultiOSPool"
 
     steps:
 
     - checkout: self
+
       displayName: "Checkout source"
+
 
     - task: TerraformInstaller@1
       displayName: "Install Terraform"
+
       inputs:
         terraformVersion: "$(terraformVersion)"
 
+
     - task: AzureCLI@2
       displayName: "Terraform Init"
+
       inputs:
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
+
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)/infra"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
         inlineScript: |
+
           $ErrorActionPreference = "Stop"
 
-          Write-Host "========================================="
-          Write-Host "Azure Authentication"
-          Write-Host "========================================="
+          $subscriptionId = az account show `
+            --query "id" `
+            -o tsv
 
-          az account show `
-            --query "{name:name,id:id,tenantId:tenantId,userType:user.type}" `
-            -o table
-
-          Write-Host ""
-          Write-Host "Terraform version:"
-          terraform version
+          $env:TF_VAR_subscription_id = $subscriptionId
 
           $env:ARM_USE_OIDC = "true"
           $env:ARM_USE_AZUREAD = "true"
+
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
-          Write-Host ""
-          Write-Host "Running Terraform init..."
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
+            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform init -input=false
 
+
     - task: PowerShell@2
       displayName: "Terraform Format Check"
+
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)/infra"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
         script: |
+
           $ErrorActionPreference = "Stop"
+
           terraform fmt -check -recursive
+
 
     - task: PowerShell@2
       displayName: "Terraform Validate"
+
       inputs:
         targetType: "inline"
-        workingDirectory: "$(Build.SourcesDirectory)/infra"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
         script: |
+
           $ErrorActionPreference = "Stop"
+
           terraform validate
+
 
     - task: AzureCLI@2
       displayName: "Terraform Plan"
+
       inputs:
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
+
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)/infra"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
         inlineScript: |
+
           $ErrorActionPreference = "Stop"
 
-          $subscriptionId = az account show --query "id" -o tsv
-
-          Write-Host "Subscription: $subscriptionId"
+          $subscriptionId = az account show `
+            --query "id" `
+            -o tsv
 
           $env:TF_VAR_subscription_id = $subscriptionId
+
           $env:ARM_USE_OIDC = "true"
           $env:ARM_USE_AZUREAD = "true"
+
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
-          Write-Host ""
-          Write-Host "Running Terraform plan..."
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
+            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform plan `
             -input=false `
-            -out="$(Build.ArtifactStagingDirectory)/tfplan"
+            -out="$(Build.ArtifactStagingDirectory)\tfplan"
+
 
     - task: PublishPipelineArtifact@1
       displayName: "Publish Terraform Plan"
+
       inputs:
-        targetPath: "$(Build.ArtifactStagingDirectory)/tfplan"
+        targetPath: "$(Build.ArtifactStagingDirectory)\tfplan"
         artifact: "terraform-plan"
         publishLocation: "pipeline"
 
+
+# ============================================================
+# 2. TERRAFORM APPLY
+# ============================================================
+
 - stage: TerraformApply
+
   displayName: "Terraform Apply"
-  dependsOn: TerraformPlan
+
+  dependsOn:
+    - TerraformPlan
+
   condition: succeeded()
 
   jobs:
 
   - job: Approval
-    displayName: "Approve Infrastructure Deployment"
+
+    displayName: "Infrastructure Approval"
+
     pool: server
 
     steps:
 
     - task: ManualValidation@1
+
       displayName: "Approve Terraform Apply"
+
       timeoutInMinutes: 1440
+
       inputs:
+
         notifyUsers: |
-          shakirshah@microsoft.com
+          YOUR_EMAIL
+
         instructions: |
-          Review the Terraform Plan from the previous stage.
+          Review the Terraform plan.
+          Approve to apply the reviewed infrastructure changes.
 
-          Planned changes:
-          18 resources to be created
-          0 resources changed
-          0 resources destroyed
-
-          Approve this validation to deploy the infrastructure to Azure.
         onTimeout: "reject"
 
+
   - job: Apply
+
     displayName: "Terraform Apply"
-    dependsOn: Approval
+
+    dependsOn:
+      - Approval
+
     condition: succeeded()
 
     pool:
@@ -156,63 +203,611 @@ stages:
     steps:
 
     - checkout: self
-      displayName: "Checkout source"
 
     - task: TerraformInstaller@1
+
       displayName: "Install Terraform"
+
       inputs:
         terraformVersion: "$(terraformVersion)"
 
+
     - task: DownloadPipelineArtifact@2
+
       displayName: "Download Terraform Plan"
+
       inputs:
         artifact: "terraform-plan"
-        path: "$(Pipeline.Workspace)/terraform-plan"
+        path: "$(Pipeline.Workspace)\terraform-plan"
+
 
     - task: AzureCLI@2
-      displayName: "Terraform Init for Apply"
+
+      displayName: "Terraform Init"
+
       inputs:
+
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
+
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)/infra"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
         inlineScript: |
+
           $ErrorActionPreference = "Stop"
 
-          $subscriptionId = az account show --query "id" -o tsv
+          $subscriptionId = az account show `
+            --query "id" `
+            -o tsv
 
           $env:TF_VAR_subscription_id = $subscriptionId
+
           $env:ARM_USE_OIDC = "true"
           $env:ARM_USE_AZUREAD = "true"
+
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
+            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform init -input=false
 
+
     - task: AzureCLI@2
+
       displayName: "Terraform Apply"
+
       inputs:
+
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
+
         scriptType: "ps"
         scriptLocation: "inlineScript"
-        workingDirectory: "$(Build.SourcesDirectory)/infra"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
         inlineScript: |
+
           $ErrorActionPreference = "Stop"
 
-          $subscriptionId = az account show --query "id" -o tsv
+          $subscriptionId = az account show `
+            --query "id" `
+            -o tsv
 
           $env:TF_VAR_subscription_id = $subscriptionId
+
           $env:ARM_USE_OIDC = "true"
           $env:ARM_USE_AZUREAD = "true"
+
           $env:ARM_CLIENT_ID = $env:servicePrincipalId
           $env:ARM_TENANT_ID = $env:tenantId
-          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
-          Write-Host "Applying reviewed Terraform plan..."
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID =
+            $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
           terraform apply `
             -input=false `
-            "$(Pipeline.Workspace)/terraform-plan/tfplan"
+            "$(Pipeline.Workspace)\terraform-plan\tfplan"
+
+
+    - task: PowerShell@2
+
+      displayName: "Export Terraform Outputs"
+
+      inputs:
+
+        targetType: "inline"
+
+        workingDirectory: "$(Build.SourcesDirectory)\infra"
+
+        script: |
+
+          $ErrorActionPreference = "Stop"
+
+          terraform output -json |
+            Out-File `
+              "$(Build.ArtifactStagingDirectory)\terraform-outputs.json" `
+              -Encoding utf8
+
+
+    - task: PublishPipelineArtifact@1
+
+      displayName: "Publish Terraform Outputs"
+
+      inputs:
+
+        targetPath: "$(Build.ArtifactStagingDirectory)\terraform-outputs.json"
+
+        artifact: "terraform-outputs"
+
+        publishLocation: "pipeline"
+
+
+# ============================================================
+# 3. PYTHON TEST
+# ============================================================
+
+- stage: ApplicationTests
+
+  displayName: "Application Tests"
+
+  dependsOn:
+    - TerraformApply
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: Test
+
+    displayName: "Run Application Tests"
+
+    pool:
+      vmImage: "ubuntu-latest"
+
+    steps:
+
+    - checkout: self
+
+
+    - task: UsePythonVersion@0
+
+      displayName: "Use Python 3.12"
+
+      inputs:
+        versionSpec: "3.12"
+
+
+    - bash: |
+
+        set -euo pipefail
+
+        cd "$(Build.SourcesDirectory)/app"
+
+        python -m pip install --upgrade pip
+
+        python -m pip install -r requirements.txt
+
+        python -m pytest -v
+
+      displayName: "Run pytest"
+
+
+# ============================================================
+# 4. DOCKER BUILD + TRIVY + ACR PUSH
+# ============================================================
+
+- stage: ContainerBuild
+
+  displayName: "Build Scan Push"
+
+  dependsOn:
+
+    - TerraformApply
+    - ApplicationTests
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: Build
+
+    displayName: "Build sre-api"
+
+    pool:
+      vmImage: "ubuntu-latest"
+
+    steps:
+
+    - checkout: self
+
+
+    # --------------------------------------------------------
+    # Read Terraform outputs
+    # --------------------------------------------------------
+
+    - task: DownloadPipelineArtifact@2
+
+      displayName: "Download Terraform Outputs"
+
+      inputs:
+
+        artifact: "terraform-outputs"
+
+        path: "$(Pipeline.Workspace)/terraform-outputs"
+
+
+    - bash: |
+
+        set -euo pipefail
+
+        OUTPUT_FILE="$(Pipeline.Workspace)/terraform-outputs/terraform-outputs.json"
+
+        ACR_NAME=$(python -c "
+        import json
+        print(json.load(open('$OUTPUT_FILE'))['acr_name']['value'])
+        ")
+
+        ACR_LOGIN_SERVER=$(python -c "
+        import json
+        print(json.load(open('$OUTPUT_FILE'))['acr_login_server']['value'])
+        ")
+
+        echo "ACR: $ACR_NAME"
+        echo "Login server: $ACR_LOGIN_SERVER"
+
+        echo "##vso[task.setvariable variable=acrName]$ACR_NAME"
+        echo "##vso[task.setvariable variable=acrLoginServer]$ACR_LOGIN_SERVER"
+
+      displayName: "Read ACR details"
+
+
+    # --------------------------------------------------------
+    # Build
+    # --------------------------------------------------------
+
+    - bash: |
+
+        set -euo pipefail
+
+        cd "$(Build.SourcesDirectory)/app"
+
+        docker build \
+          -t "$(acrLoginServer)/sre-api:$(Build.BuildId)" \
+          -t "$(acrLoginServer)/sre-api:latest" \
+          .
+
+      displayName: "Build Docker image"
+
+
+    # --------------------------------------------------------
+    # Trivy
+    # --------------------------------------------------------
+
+    - bash: |
+
+        set -euo pipefail
+
+        sudo apt-get update
+
+        sudo apt-get install -y wget gnupg
+
+        wget -qO- \
+          https://aquasecurity.github.io/trivy-repo/deb/public.key |
+          gpg --dearmor |
+          sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+        echo \
+          "deb [signed-by=/usr/share/keyrings/trivy.gpg] \
+          https://aquasecurity.github.io/trivy-repo/deb \
+          generic main" |
+          sudo tee /etc/apt/sources.list.d/trivy.list
+
+        sudo apt-get update
+
+        sudo apt-get install -y trivy
+
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --ignore-unfixed \
+          "$(acrLoginServer)/sre-api:$(Build.BuildId)"
+
+      displayName: "Security scan"
+
+
+    # --------------------------------------------------------
+    # Login ACR
+    # --------------------------------------------------------
+
+    - task: AzureCLI@2
+
+      displayName: "Login to ACR"
+
+      inputs:
+
+        azureSubscription: "$(azureServiceConnection)"
+
+        addSpnToEnvironment: true
+
+        scriptType: "bash"
+
+        scriptLocation: "inlineScript"
+
+        inlineScript: |
+
+          set -euo pipefail
+
+          az acr login --name "$(acrName)"
+
+
+    # --------------------------------------------------------
+    # Push
+    # --------------------------------------------------------
+
+    - bash: |
+
+        set -euo pipefail
+
+        docker push \
+          "$(acrLoginServer)/sre-api:$(Build.BuildId)"
+
+        docker push \
+          "$(acrLoginServer)/sre-api:latest"
+
+      displayName: "Push image to ACR"
+
+
+# ============================================================
+# 5. HELM DEPLOY
+# ============================================================
+
+- stage: AKSDeploy
+
+  displayName: "Deploy to AKS"
+
+  dependsOn:
+    - ContainerBuild
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: Deploy
+
+    displayName: "Deploy sre-api"
+
+    pool:
+      name: "MultiOSPool"
+
+    steps:
+
+    - checkout: self
+
+
+    - task: DownloadPipelineArtifact@2
+
+      displayName: "Download Terraform Outputs"
+
+      inputs:
+
+        artifact: "terraform-outputs"
+
+        path: "$(Pipeline.Workspace)\terraform-outputs"
+
+
+    - task: HelmInstaller@1
+
+      displayName: "Install Helm"
+
+      inputs:
+        helmVersionToInstall: "latest"
+
+
+    - task: AzureCLI@2
+
+      displayName: "Configure AKS"
+
+      inputs:
+
+        azureSubscription: "$(azureServiceConnection)"
+
+        addSpnToEnvironment: true
+
+        scriptType: "ps"
+
+        scriptLocation: "inlineScript"
+
+        inlineScript: |
+
+          $ErrorActionPreference = "Stop"
+
+          $outputFile =
+            "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+
+          $outputs = Get-Content $outputFile |
+            ConvertFrom-Json
+
+          $resourceGroup =
+            $outputs.resource_group_name.value
+
+          $aksName =
+            $outputs.aks_name.value
+
+          az aks get-credentials `
+            --resource-group $resourceGroup `
+            --name $aksName `
+            --overwrite-existing
+
+          kubectl get nodes
+
+
+    # --------------------------------------------------------
+    # Helm lint
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+
+      displayName: "Helm Lint"
+
+      inputs:
+
+        targetType: "inline"
+
+        workingDirectory: "$(Build.SourcesDirectory)"
+
+        script: |
+
+          $ErrorActionPreference = "Stop"
+
+          helm lint .\charts\sre-api
+
+
+    # --------------------------------------------------------
+    # Helm template
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+
+      displayName: "Helm Template Validation"
+
+      inputs:
+
+        targetType: "inline"
+
+        workingDirectory: "$(Build.SourcesDirectory)"
+
+        script: |
+
+          $ErrorActionPreference = "Stop"
+
+          helm template sre-api .\charts\sre-api `
+            --namespace $(namespace) `
+            --set image.repository="example.azurecr.io/sre-api" `
+            --set image.tag="$(Build.BuildId)"
+
+      # -------------------------------------------------------
+      # Deploy
+      # -------------------------------------------------------
+
+    - task: PowerShell@2
+
+      displayName: "Helm Deploy"
+
+      inputs:
+
+        targetType: "inline"
+
+        workingDirectory: "$(Build.SourcesDirectory)"
+
+        script: |
+
+          $ErrorActionPreference = "Stop"
+
+          $outputFile =
+            "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+
+          $outputs = Get-Content $outputFile |
+            ConvertFrom-Json
+
+          $acrLoginServer =
+            $outputs.acr_login_server.value
+
+          helm upgrade --install sre-api .\charts\sre-api `
+            --namespace $(namespace) `
+            --create-namespace `
+            --set image.repository="$acrLoginServer/sre-api" `
+            --set image.tag="$(Build.BuildId)" `
+            --set collector.enabled=false `
+            --set analyser.enabled=false `
+            --wait `
+            --timeout 10m
+
+
+# ============================================================
+# 6. SMOKE TEST
+# ============================================================
+
+- stage: SmokeTest
+
+  displayName: "AKS Smoke Test"
+
+  dependsOn:
+    - AKSDeploy
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: Smoke
+
+    displayName: "Validate sre-api"
+
+    pool:
+      name: "MultiOSPool"
+
+    steps:
+
+    - checkout: self
+
+
+    - task: DownloadPipelineArtifact@2
+
+      displayName: "Download Terraform Outputs"
+
+      inputs:
+
+        artifact: "terraform-outputs"
+
+        path: "$(Pipeline.Workspace)\terraform-outputs"
+
+
+    - task: AzureCLI@2
+
+      displayName: "Configure AKS"
+
+      inputs:
+
+        azureSubscription: "$(azureServiceConnection)"
+
+        addSpnToEnvironment: true
+
+        scriptType: "ps"
+
+        scriptLocation: "inlineScript"
+
+        inlineScript: |
+
+          $ErrorActionPreference = "Stop"
+
+          $outputFile =
+            "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
+
+          $outputs = Get-Content $outputFile |
+            ConvertFrom-Json
+
+          $resourceGroup =
+            $outputs.resource_group_name.value
+
+          $aksName =
+            $outputs.aks_name.value
+
+          az aks get-credentials `
+            --resource-group $resourceGroup `
+            --name $aksName `
+            --overwrite-existing
+
+
+    - task: PowerShell@2
+
+      displayName: "Validate Kubernetes deployment"
+
+      inputs:
+
+        targetType: "inline"
+
+        script: |
+
+          $ErrorActionPreference = "Stop"
+
+          kubectl get nodes
+
+          kubectl get pods -n $(namespace)
+
+          kubectl get deployment sre-api `
+            -n $(namespace)
+
+          kubectl get hpa sre-api `
+            -n $(namespace)
+
+          kubectl get pdb sre-api `
+            -n $(namespace)
+
+          kubectl rollout status `
+            deployment/sre-api `
+            -n $(namespace) `
+            --timeout=300s

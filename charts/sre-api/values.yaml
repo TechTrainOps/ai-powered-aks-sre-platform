@@ -3,13 +3,21 @@ image:
   tag: "1.0.0"
   pullPolicy: IfNotPresent
 
+collector:
+  enabled: false
+
 collectorImage:
   repository: example.azurecr.io/incident-collector
   tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+analyser:
+  enabled: false
 
 analyserImage:
   repository: example.azurecr.io/ai-analyser
   tag: "1.0.0"
+  pullPolicy: IfNotPresent
 
 replicaCount: 2
 namespace: sre
@@ -20,7 +28,7 @@ service:
 
 collectorService:
   port: 8080
-  type: LoadBalancer
+  type: ClusterIP
 
 analyserService:
   port: 8080
