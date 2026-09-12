@@ -4,8 +4,8 @@ variable "subscription_id" {
 }
 
 variable "location" {
-  type        = string
-  default     = "eastus2"
+  type    = string
+  default = "eastus2"
 }
 
 variable "resource_prefix" {

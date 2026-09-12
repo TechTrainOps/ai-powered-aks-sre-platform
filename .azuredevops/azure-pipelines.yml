@@ -193,25 +193,48 @@
 trigger: none
 
 pool:
-  vmImage: ubuntu-latest
+  name: "MultiOSPool"
+
+variables:
+  terraformVersion: "1.11.2"
+  azureServiceConnection: "sc-azure-ai-aks-sre"
 
 steps:
-- task: AzureCLI@2
-  displayName: "Test Azure authentication"
+
+- checkout: self
+  displayName: "Checkout source"
+
+- task: TerraformInstaller@1
+  displayName: "Install Terraform"
   inputs:
-    azureSubscription: "sc-azure-ai-aks-sre"
-    scriptType: bash
-    scriptLocation: inlineScript
+    terraformVersion: "$(terraformVersion)"
+
+- task: AzureCLI@2
+  displayName: "Terraform Init"
+  inputs:
+    azureSubscription: "$(azureServiceConnection)"
+    addSpnToEnvironment: true
+    scriptType: "ps"
+    scriptLocation: "inlineScript"
+    workingDirectory: "$(Build.SourcesDirectory)\infra"
     inlineScript: |
-      set -e
+      $ErrorActionPreference = "Stop"
 
-      echo "Azure account:"
-      az account show \
-        --query "{name:name, id:id, tenantId:tenantId}" \
-        --output table
+      Write-Host "Azure subscription:"
+      az account show --query "{name:name,id:id,tenantId:tenantId}" -o table
 
-      echo ""
-      echo "Resource groups:"
-      az group list \
-        --query "[].name" \
-        --output table
+      Write-Host ""
+      Write-Host "Terraform version:"
+      terraform version
+
+      Write-Host ""
+      Write-Host "OIDC service connection:"
+      Write-Host $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+
+      Write-Host ""
+      Write-Host "Running Terraform init..."
+
+      $env:ARM_USE_OIDC = "true"
+      $env:ARM_USE_AZUREAD = "true"
+
+      terraform init -input=false

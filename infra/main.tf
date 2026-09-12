@@ -9,17 +9,17 @@ resource "random_string" "suffix" {
 }
 
 locals {
-  suffix       = random_string.suffix.result
-  rg_name      = "rg-${var.resource_prefix}-${local.suffix}"
-  vnet_name    = "vnet-${var.resource_prefix}"
-  snet_name    = "snet-aks"
-  aks_name     = "aks-${var.resource_prefix}-${local.suffix}"
-  acr_name     = replace("acr${var.resource_prefix}${local.suffix}", "-", "")
-  law_name     = "law-${var.resource_prefix}-${local.suffix}"
-  amw_name     = "amw-${var.resource_prefix}-${local.suffix}"
-  grafana_name = "grafana-${var.resource_prefix}-${local.suffix}"
-  openai_name  = "aoai-${var.resource_prefix}-${local.suffix}"
-  identity_name = "id-${var.project_name}-analyser"
+  suffix                  = random_string.suffix.result
+  rg_name                 = "rg-${var.resource_prefix}-${local.suffix}"
+  vnet_name               = "vnet-${var.resource_prefix}"
+  snet_name               = "snet-aks"
+  aks_name                = "aks-${var.resource_prefix}-${local.suffix}"
+  acr_name                = replace("acr${var.resource_prefix}${local.suffix}", "-", "")
+  law_name                = "law-${var.resource_prefix}-${local.suffix}"
+  amw_name                = "amw-${var.resource_prefix}-${local.suffix}"
+  grafana_name            = "grafana-${var.resource_prefix}-${local.suffix}"
+  openai_name             = "aoai-${var.resource_prefix}-${local.suffix}"
+  identity_name           = "id-${var.project_name}-analyser"
   collector_identity_name = "id-${var.project_name}-collector"
 }
 
@@ -71,27 +71,32 @@ resource "azurerm_monitor_workspace" "amw" {
 
 resource "azurerm_dashboard_grafana" "grafana" {
   name                = local.grafana_name
-  location            = azurerm_resource_group.main.location
+  location            = var.location
   resource_group_name = azurerm_resource_group.main.name
-  api_key_enabled     = false
+
+  grafana_major_version             = 12
+  api_key_enabled                   = false
   deterministic_outbound_ip_enabled = true
-  public_network_access_enabled = true
+  public_network_access_enabled     = true
+
   identity {
     type = "SystemAssigned"
   }
+
   azure_monitor_workspace_integrations {
     resource_id = azurerm_monitor_workspace.amw.id
   }
+
   tags = var.tags
 }
 
 resource "azurerm_cognitive_account" "openai" {
-  name                  = local.openai_name
-  location              = var.location
-  resource_group_name   = azurerm_resource_group.main.name
-  kind                  = "OpenAI"
-  sku_name              = "S0"
-  custom_subdomain_name = local.openai_name
+  name                          = local.openai_name
+  location                      = var.location
+  resource_group_name           = azurerm_resource_group.main.name
+  kind                          = "OpenAI"
+  sku_name                      = "S0"
+  custom_subdomain_name         = local.openai_name
   public_network_access_enabled = true
   identity {
     type = "SystemAssigned"
@@ -137,10 +142,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   network_profile {
-    network_plugin    = "azure"
+    network_plugin      = "azure"
     network_plugin_mode = "overlay"
-    network_policy    = "azure"
-    outbound_type     = "loadBalancer"
+    network_policy      = "azure"
+    outbound_type       = "loadBalancer"
   }
 
   azure_policy_enabled = true
@@ -173,19 +178,21 @@ resource "azurerm_role_assignment" "openai_user" {
 }
 
 resource "azurerm_federated_identity_credential" "collector" {
-  name                = "fic-incident-collector"
-  resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.collector.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = azurerm_kubernetes_cluster.aks.oidc_issuer_url
-  subject             = "system:serviceaccount:sre:incident-collector"
+  name = "fic-ai-collector"
+
+  user_assigned_identity_id = azurerm_user_assigned_identity.collector.id
+
+  audience = ["api://AzureADTokenExchange"]
+  issuer   = azurerm_kubernetes_cluster.aks.oidc_issuer_url
+  subject  = "system:serviceaccount:sre:incident-collector"
 }
 
 resource "azurerm_federated_identity_credential" "analyser" {
-  name                = "fic-ai-analyser"
-  resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.analyser.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = azurerm_kubernetes_cluster.aks.oidc_issuer_url
-  subject             = "system:serviceaccount:sre:ai-analyser"
+  name = "fic-ai-analyser"
+
+  user_assigned_identity_id = azurerm_user_assigned_identity.analyser.id
+
+  audience = ["api://AzureADTokenExchange"]
+  issuer   = azurerm_kubernetes_cluster.aks.oidc_issuer_url
+  subject  = "system:serviceaccount:sre:ai-analyser"
 }
