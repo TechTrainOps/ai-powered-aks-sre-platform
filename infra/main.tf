@@ -219,7 +219,7 @@ resource "azurerm_cognitive_deployment" "openai_model" {
   }
 
   sku {
-    name     = "Standard"
+    name     = "GlobalStandard"
     capacity = 1
   }
 
