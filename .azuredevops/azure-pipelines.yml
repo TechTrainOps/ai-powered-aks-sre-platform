@@ -3,10 +3,8 @@ trigger: none
 variables:
   terraformVersion: "1.11.2"
   azureServiceConnection: "sc-azure-ai-aks-sre"
-
   imageName: "sre-api"
   namespace: "sre"
-
 
 stages:
 
@@ -18,40 +16,30 @@ stages:
   displayName: "Terraform Plan"
 
   jobs:
-
   - job: Plan
+    displayName: "Terraform Plan"
 
     pool:
       name: "MultiOSPool"
 
     steps:
-
     - checkout: self
-
       displayName: "Checkout source"
-
 
     - task: TerraformInstaller@1
       displayName: "Install Terraform"
-
       inputs:
         terraformVersion: "$(terraformVersion)"
 
-
     - task: AzureCLI@2
       displayName: "Terraform Init"
-
       inputs:
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
-
         scriptType: "ps"
         scriptLocation: "inlineScript"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         inlineScript: |
-
           $ErrorActionPreference = "Stop"
 
           $subscriptionId = az account show `
@@ -71,51 +59,35 @@ stages:
 
           terraform init -input=false
 
-
     - task: PowerShell@2
       displayName: "Terraform Format Check"
-
       inputs:
         targetType: "inline"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           terraform fmt -check -recursive
 
-
     - task: PowerShell@2
       displayName: "Terraform Validate"
-
       inputs:
         targetType: "inline"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           terraform validate
 
-
     - task: AzureCLI@2
       displayName: "Terraform Plan"
-
       inputs:
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
-
         scriptType: "ps"
         scriptLocation: "inlineScript"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         inlineScript: |
-
           $ErrorActionPreference = "Stop"
 
           $subscriptionId = az account show `
@@ -137,10 +109,8 @@ stages:
             -input=false `
             -out="$(Build.ArtifactStagingDirectory)\tfplan"
 
-
     - task: PublishPipelineArtifact@1
       displayName: "Publish Terraform Plan"
-
       inputs:
         targetPath: "$(Build.ArtifactStagingDirectory)\tfplan"
         artifact: "terraform-plan"
@@ -152,48 +122,36 @@ stages:
 # ============================================================
 
 - stage: TerraformApply
-
   displayName: "Terraform Apply"
 
   dependsOn:
-    - TerraformPlan
+  - TerraformPlan
 
   condition: succeeded()
 
   jobs:
-
   - job: Approval
-
     displayName: "Infrastructure Approval"
 
     pool: server
 
     steps:
-
     - task: ManualValidation@1
-
       displayName: "Approve Terraform Apply"
-
       timeoutInMinutes: 1440
-
       inputs:
-
         notifyUsers: |
           YOUR_EMAIL
-
         instructions: |
           Review the Terraform plan.
           Approve to apply the reviewed infrastructure changes.
-
         onTimeout: "reject"
 
-
   - job: Apply
-
     displayName: "Terraform Apply"
 
     dependsOn:
-      - Approval
+    - Approval
 
     condition: succeeded()
 
@@ -201,42 +159,29 @@ stages:
       name: "MultiOSPool"
 
     steps:
-
     - checkout: self
+      displayName: "Checkout source"
 
     - task: TerraformInstaller@1
-
       displayName: "Install Terraform"
-
       inputs:
         terraformVersion: "$(terraformVersion)"
 
-
     - task: DownloadPipelineArtifact@2
-
       displayName: "Download Terraform Plan"
-
       inputs:
         artifact: "terraform-plan"
         path: "$(Pipeline.Workspace)\terraform-plan"
 
-
     - task: AzureCLI@2
-
       displayName: "Terraform Init"
-
       inputs:
-
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
-
         scriptType: "ps"
         scriptLocation: "inlineScript"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         inlineScript: |
-
           $ErrorActionPreference = "Stop"
 
           $subscriptionId = az account show `
@@ -256,23 +201,15 @@ stages:
 
           terraform init -input=false
 
-
     - task: AzureCLI@2
-
       displayName: "Terraform Apply"
-
       inputs:
-
         azureSubscription: "$(azureServiceConnection)"
         addSpnToEnvironment: true
-
         scriptType: "ps"
         scriptLocation: "inlineScript"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         inlineScript: |
-
           $ErrorActionPreference = "Stop"
 
           $subscriptionId = az account show `
@@ -294,19 +231,12 @@ stages:
             -input=false `
             "$(Pipeline.Workspace)\terraform-plan\tfplan"
 
-
     - task: PowerShell@2
-
       displayName: "Export Terraform Outputs"
-
       inputs:
-
         targetType: "inline"
-
         workingDirectory: "$(Build.SourcesDirectory)\infra"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           terraform output -json |
@@ -314,17 +244,11 @@ stages:
               "$(Build.ArtifactStagingDirectory)\terraform-outputs.json" `
               -Encoding utf8
 
-
     - task: PublishPipelineArtifact@1
-
       displayName: "Publish Terraform Outputs"
-
       inputs:
-
         targetPath: "$(Build.ArtifactStagingDirectory)\terraform-outputs.json"
-
         artifact: "terraform-outputs"
-
         publishLocation: "pipeline"
 
 
@@ -333,46 +257,35 @@ stages:
 # ============================================================
 
 - stage: ApplicationTests
-
   displayName: "Application Tests"
 
   dependsOn:
-    - TerraformApply
+  - TerraformApply
 
   condition: succeeded()
 
   jobs:
-
   - job: Test
-
     displayName: "Run Application Tests"
 
     pool:
       vmImage: "ubuntu-latest"
 
     steps:
-
     - checkout: self
 
-
     - task: UsePythonVersion@0
-
       displayName: "Use Python 3.12"
-
       inputs:
         versionSpec: "3.12"
 
-
     - bash: |
-
         set -euo pipefail
 
         cd "$(Build.SourcesDirectory)/app"
 
         python -m pip install --upgrade pip
-
         python -m pip install -r requirements.txt
-
         python -m pytest -v
 
       displayName: "Run pytest"
@@ -383,47 +296,35 @@ stages:
 # ============================================================
 
 - stage: ContainerBuild
-
   displayName: "Build Scan Push"
 
   dependsOn:
-
-    - TerraformApply
-    - ApplicationTests
+  - TerraformApply
+  - ApplicationTests
 
   condition: succeeded()
 
   jobs:
-
   - job: Build
-
     displayName: "Build sre-api"
 
     pool:
       vmImage: "ubuntu-latest"
 
     steps:
-
     - checkout: self
-
 
     # --------------------------------------------------------
     # Read Terraform outputs
     # --------------------------------------------------------
 
     - task: DownloadPipelineArtifact@2
-
       displayName: "Download Terraform Outputs"
-
       inputs:
-
         artifact: "terraform-outputs"
-
         path: "$(Pipeline.Workspace)/terraform-outputs"
 
-
     - bash: |
-
         set -euo pipefail
 
         OUTPUT_FILE="$(Pipeline.Workspace)/terraform-outputs/terraform-outputs.json"
@@ -446,13 +347,11 @@ stages:
 
       displayName: "Read ACR details"
 
-
     # --------------------------------------------------------
     # Build
     # --------------------------------------------------------
 
     - bash: |
-
         set -euo pipefail
 
         cd "$(Build.SourcesDirectory)/app"
@@ -464,17 +363,14 @@ stages:
 
       displayName: "Build Docker image"
 
-
     # --------------------------------------------------------
     # Trivy
     # --------------------------------------------------------
 
     - bash: |
-
         set -euo pipefail
 
         sudo apt-get update
-
         sudo apt-get install -y wget gnupg
 
         wget -qO- \
@@ -489,7 +385,6 @@ stages:
           sudo tee /etc/apt/sources.list.d/trivy.list
 
         sudo apt-get update
-
         sudo apt-get install -y trivy
 
         trivy image \
@@ -499,38 +394,27 @@ stages:
 
       displayName: "Security scan"
 
-
     # --------------------------------------------------------
     # Login ACR
     # --------------------------------------------------------
 
     - task: AzureCLI@2
-
       displayName: "Login to ACR"
-
       inputs:
-
         azureSubscription: "$(azureServiceConnection)"
-
         addSpnToEnvironment: true
-
         scriptType: "bash"
-
         scriptLocation: "inlineScript"
-
         inlineScript: |
-
           set -euo pipefail
 
           az acr login --name "$(acrName)"
-
 
     # --------------------------------------------------------
     # Push
     # --------------------------------------------------------
 
     - bash: |
-
         set -euo pipefail
 
         docker push \
@@ -541,6 +425,10 @@ stages:
 
       displayName: "Push image to ACR"
 
+
+# ============================================================
+# 5. HELM VALIDATION
+# ============================================================
 
 - stage: HelmValidation
   displayName: "Validate Helm Chart"
@@ -553,12 +441,10 @@ stages:
       name: "MultiOSPool"
 
     steps:
-
     - checkout: self
 
     - task: HelmInstaller@1
       displayName: "Install Helm"
-
       inputs:
         helmVersionToInstall: "latest"
 
@@ -575,71 +461,51 @@ stages:
           --set image.tag="test" `
           --set collector.enabled=false `
           --set analyser.enabled=false
+
       displayName: "Lint and render Helm chart"
 
 
 # ============================================================
-# 5. HELM DEPLOY
+# 6. HELM DEPLOY
 # ============================================================
 
 - stage: AKSDeploy
-
   displayName: "Deploy to AKS"
 
   dependsOn:
-    - ContainerBuild
+  - ContainerBuild
 
   condition: succeeded()
 
   jobs:
-
   - job: Deploy
-
     displayName: "Deploy sre-api"
 
     pool:
       name: "MultiOSPool"
 
     steps:
-
     - checkout: self
 
-
     - task: DownloadPipelineArtifact@2
-
       displayName: "Download Terraform Outputs"
-
       inputs:
-
         artifact: "terraform-outputs"
-
         path: "$(Pipeline.Workspace)\terraform-outputs"
 
-
     - task: HelmInstaller@1
-
       displayName: "Install Helm"
-
       inputs:
         helmVersionToInstall: "latest"
 
-
     - task: AzureCLI@2
-
       displayName: "Configure AKS"
-
       inputs:
-
         azureSubscription: "$(azureServiceConnection)"
-
         addSpnToEnvironment: true
-
         scriptType: "ps"
-
         scriptLocation: "inlineScript"
-
         inlineScript: |
-
           $ErrorActionPreference = "Stop"
 
           $outputFile =
@@ -661,44 +527,30 @@ stages:
 
           kubectl get nodes
 
-
     # --------------------------------------------------------
     # Helm lint
     # --------------------------------------------------------
 
     - task: PowerShell@2
-
       displayName: "Helm Lint"
-
       inputs:
-
         targetType: "inline"
-
         workingDirectory: "$(Build.SourcesDirectory)"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           helm lint .\charts\sre-api
-
 
     # --------------------------------------------------------
     # Helm template
     # --------------------------------------------------------
 
     - task: PowerShell@2
-
       displayName: "Helm Template Validation"
-
       inputs:
-
         targetType: "inline"
-
         workingDirectory: "$(Build.SourcesDirectory)"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           helm template sre-api .\charts\sre-api `
@@ -706,22 +558,16 @@ stages:
             --set image.repository="example.azurecr.io/sre-api" `
             --set image.tag="$(Build.BuildId)"
 
-      # -------------------------------------------------------
-      # Deploy
-      # -------------------------------------------------------
+    # --------------------------------------------------------
+    # Deploy
+    # --------------------------------------------------------
 
     - task: PowerShell@2
-
       displayName: "Helm Deploy"
-
       inputs:
-
         targetType: "inline"
-
         workingDirectory: "$(Build.SourcesDirectory)"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           $outputFile =
@@ -745,59 +591,41 @@ stages:
 
 
 # ============================================================
-# 6. SMOKE TEST
+# 7. SMOKE TEST
 # ============================================================
 
 - stage: SmokeTest
-
   displayName: "AKS Smoke Test"
 
   dependsOn:
-    - AKSDeploy
+  - AKSDeploy
 
   condition: succeeded()
 
   jobs:
-
   - job: Smoke
-
     displayName: "Validate sre-api"
 
     pool:
       name: "MultiOSPool"
 
     steps:
-
     - checkout: self
 
-
     - task: DownloadPipelineArtifact@2
-
       displayName: "Download Terraform Outputs"
-
       inputs:
-
         artifact: "terraform-outputs"
-
         path: "$(Pipeline.Workspace)\terraform-outputs"
 
-
     - task: AzureCLI@2
-
       displayName: "Configure AKS"
-
       inputs:
-
         azureSubscription: "$(azureServiceConnection)"
-
         addSpnToEnvironment: true
-
         scriptType: "ps"
-
         scriptLocation: "inlineScript"
-
         inlineScript: |
-
           $ErrorActionPreference = "Stop"
 
           $outputFile =
@@ -817,22 +645,17 @@ stages:
             --name $aksName `
             --overwrite-existing
 
-
     - task: PowerShell@2
-
       displayName: "Validate Kubernetes deployment"
-
       inputs:
-
         targetType: "inline"
-
         script: |
-
           $ErrorActionPreference = "Stop"
 
           kubectl get nodes
 
-          kubectl get pods -n $(namespace)
+          kubectl get pods `
+            -n $(namespace)
 
           kubectl get deployment sre-api `
             -n $(namespace)
