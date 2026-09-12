@@ -1,191 +1,217 @@
-trigger:
-  branches:
-    include:
-      - main
-      - feature/*
+# trigger:
+#   branches:
+#     include:
+#       - main
+#       - feature/*
 
-pr:
-  branches:
-    include:
-      - main
+# pr:
+#   branches:
+#     include:
+#       - main
 
-parameters:
-  - name: applyInfra
-    type: boolean
-    default: false
+# parameters:
+#   - name: applyInfra
+#     type: boolean
+#     default: false
 
-variables:
-  azureServiceConnection: 'sc-azure-aks-sre'
-  acrName: ''
-  imageTag: '$(Build.SourceVersion)'
-  azureOpenAIDeployment: 'sre-analyser'
+# variables:
+#   azureServiceConnection: 'sc-azure-aks-sre'
+#   acrName: ''
+#   imageTag: '$(Build.SourceVersion)'
+#   azureOpenAIDeployment: 'sre-analyser'
 
-stages:
-  - stage: Validate
-    displayName: Validate
-    jobs:
-      - job: validate
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - checkout: self
+# stages:
+#   - stage: Validate
+#     displayName: Validate
+#     jobs:
+#       - job: validate
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - checkout: self
 
-          - task: TerraformInstaller@1
-            inputs:
-              terraformVersion: '1.8.5'
+#           - task: TerraformInstaller@1
+#             inputs:
+#               terraformVersion: '1.8.5'
 
-          - bash: |
-              set -euo pipefail
-              terraform -chdir=infra init -backend=false
-              terraform -chdir=infra fmt -check -recursive
-              terraform -chdir=infra validate
-            displayName: Terraform validate
+#           - bash: |
+#               set -euo pipefail
+#               terraform -chdir=infra init -backend=false
+#               terraform -chdir=infra fmt -check -recursive
+#               terraform -chdir=infra validate
+#             displayName: Terraform validate
 
-          - task: UsePythonVersion@0
-            inputs:
-              versionSpec: '3.11'
+#           - task: UsePythonVersion@0
+#             inputs:
+#               versionSpec: '3.11'
 
-          - bash: |
-              set -euo pipefail
-              python -m pip install --upgrade pip
-              pip install -r app/requirements.txt
-              pip install -r incident-collector/requirements.txt
-              pip install -r ai-analyser/requirements.txt
-              PYTHONPATH=app pytest -q app/tests
-              PYTHONPATH=incident-collector pytest -q incident-collector/tests
-              PYTHONPATH=ai-analyser pytest -q ai-analyser/tests
-            displayName: Python unit tests
+#           - bash: |
+#               set -euo pipefail
+#               python -m pip install --upgrade pip
+#               pip install -r app/requirements.txt
+#               pip install -r incident-collector/requirements.txt
+#               pip install -r ai-analyser/requirements.txt
+#               PYTHONPATH=app pytest -q app/tests
+#               PYTHONPATH=incident-collector pytest -q incident-collector/tests
+#               PYTHONPATH=ai-analyser pytest -q ai-analyser/tests
+#             displayName: Python unit tests
 
-          - task: HelmInstaller@1
-            inputs:
-              helmVersionToInstall: latest
+#           - task: HelmInstaller@1
+#             inputs:
+#               helmVersionToInstall: latest
 
-          - bash: helm lint charts/sre-api
-            displayName: Helm lint
+#           - bash: helm lint charts/sre-api
+#             displayName: Helm lint
 
-  - stage: Build
-    dependsOn: Validate
-    condition: succeeded()
-    jobs:
-      - job: build
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - checkout: self
+#   - stage: Build
+#     dependsOn: Validate
+#     condition: succeeded()
+#     jobs:
+#       - job: build
+#         pool:
+#           vmImage: ubuntu-latest
+#         steps:
+#           - checkout: self
 
-          - task: AzureCLI@2
-            displayName: Build and scan containers
-            inputs:
-              azureSubscription: '$(azureServiceConnection)'
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -euo pipefail
-                ACR_LOGIN_SERVER=$(az acr show --name "$(acrName)" --query loginServer -o tsv)
-                az acr login --name "$(acrName)"
+#           - task: AzureCLI@2
+#             displayName: Build and scan containers
+#             inputs:
+#               azureSubscription: '$(azureServiceConnection)'
+#               scriptType: bash
+#               scriptLocation: inlineScript
+#               inlineScript: |
+#                 set -euo pipefail
+#                 ACR_LOGIN_SERVER=$(az acr show --name "$(acrName)" --query loginServer -o tsv)
+#                 az acr login --name "$(acrName)"
 
-                docker build -t "$ACR_LOGIN_SERVER/sre-api:$(imageTag)" app
-                docker build -t "$ACR_LOGIN_SERVER/incident-collector:$(imageTag)" incident-collector
-                docker build -t "$ACR_LOGIN_SERVER/ai-analyser:$(imageTag)" ai-analyser
+#                 docker build -t "$ACR_LOGIN_SERVER/sre-api:$(imageTag)" app
+#                 docker build -t "$ACR_LOGIN_SERVER/incident-collector:$(imageTag)" incident-collector
+#                 docker build -t "$ACR_LOGIN_SERVER/ai-analyser:$(imageTag)" ai-analyser
 
-                docker pull aquasec/trivy:0.67.2
-                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --exit-code 1 --severity HIGH,CRITICAL "$ACR_LOGIN_SERVER/sre-api:$(imageTag)"
-                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --exit-code 1 --severity HIGH,CRITICAL "$ACR_LOGIN_SERVER/incident-collector:$(imageTag)"
-                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --exit-code 1 --severity HIGH,CRITICAL "$ACR_LOGIN_SERVER/ai-analyser:$(imageTag)"
+#                 docker pull aquasec/trivy:0.67.2
+#                 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --exit-code 1 --severity HIGH,CRITICAL "$ACR_LOGIN_SERVER/sre-api:$(imageTag)"
+#                 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --exit-code 1 --severity HIGH,CRITICAL "$ACR_LOGIN_SERVER/incident-collector:$(imageTag)"
+#                 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --exit-code 1 --severity HIGH,CRITICAL "$ACR_LOGIN_SERVER/ai-analyser:$(imageTag)"
 
-                docker push "$ACR_LOGIN_SERVER/sre-api:$(imageTag)"
-                docker push "$ACR_LOGIN_SERVER/incident-collector:$(imageTag)"
-                docker push "$ACR_LOGIN_SERVER/ai-analyser:$(imageTag)"
+#                 docker push "$ACR_LOGIN_SERVER/sre-api:$(imageTag)"
+#                 docker push "$ACR_LOGIN_SERVER/incident-collector:$(imageTag)"
+#                 docker push "$ACR_LOGIN_SERVER/ai-analyser:$(imageTag)"
 
-  - stage: Infrastructure
-    dependsOn: Build
-    condition: and(succeeded(), eq('${{ parameters.applyInfra }}', 'true'))
-    jobs:
-      - deployment: terraform_apply
-        environment: aks-sre-infrastructure
-        pool:
-          vmImage: ubuntu-latest
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - checkout: self
-                - task: TerraformInstaller@1
-                  inputs:
-                    terraformVersion: '1.8.5'
-                - task: AzureCLI@2
-                  displayName: Terraform apply
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      set -euo pipefail
-                      terraform -chdir=infra init
-                      terraform -chdir=infra apply -auto-approve
+#   - stage: Infrastructure
+#     dependsOn: Build
+#     condition: and(succeeded(), eq('${{ parameters.applyInfra }}', 'true'))
+#     jobs:
+#       - deployment: terraform_apply
+#         environment: aks-sre-infrastructure
+#         pool:
+#           vmImage: ubuntu-latest
+#         strategy:
+#           runOnce:
+#             deploy:
+#               steps:
+#                 - checkout: self
+#                 - task: TerraformInstaller@1
+#                   inputs:
+#                     terraformVersion: '1.8.5'
+#                 - task: AzureCLI@2
+#                   displayName: Terraform apply
+#                   inputs:
+#                     azureSubscription: '$(azureServiceConnection)'
+#                     scriptType: bash
+#                     scriptLocation: inlineScript
+#                     inlineScript: |
+#                       set -euo pipefail
+#                       terraform -chdir=infra init
+#                       terraform -chdir=infra apply -auto-approve
 
-  - stage: Deploy
-    dependsOn:
-      - Validate
-      - Build
-    condition: succeeded()
-    jobs:
-      - deployment: deploy_aks
-        environment: aks-sre-production
-        pool:
-          vmImage: ubuntu-latest
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - checkout: self
-                  fetchDepth: 1
+#   - stage: Deploy
+#     dependsOn:
+#       - Validate
+#       - Build
+#     condition: succeeded()
+#     jobs:
+#       - deployment: deploy_aks
+#         environment: aks-sre-production
+#         pool:
+#           vmImage: ubuntu-latest
+#         strategy:
+#           runOnce:
+#             deploy:
+#               steps:
+#                 - checkout: self
+#                   fetchDepth: 1
 
-                - task: HelmInstaller@1
-                  inputs:
-                    helmVersionToInstall: latest
+#                 - task: HelmInstaller@1
+#                   inputs:
+#                     helmVersionToInstall: latest
 
-                - task: AzureCLI@2
-                  displayName: Helm deploy to AKS
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      set -euo pipefail
-                      RG=$(az aks list --query "[?contains(name, 'aks-aks-sre')].resourceGroup | [0]" -o tsv)
-                      AKS=$(az aks list --query "[?contains(name, 'aks-aks-sre')].name | [0]" -o tsv)
-                      ACR_LOGIN_SERVER=$(az acr show --name "$(acrName)" --query loginServer -o tsv)
-                      LAW_ID=$(az monitor log-analytics workspace list -g "$RG" --query '[0].customerId' -o tsv)
-                      OAIE=$(az cognitiveservices account list -g "$RG" --query '[0].properties.endpoint' -o tsv)
-                      ANALYSER_ID=$(az identity list -g "$RG" --query "[?contains(name, 'analyser')].clientId | [0]" -o tsv)
-                      COLLECTOR_ID=$(az identity list -g "$RG" --query "[?contains(name, 'collector')].clientId | [0]" -o tsv)
+#                 - task: AzureCLI@2
+#                   displayName: Helm deploy to AKS
+#                   inputs:
+#                     azureSubscription: '$(azureServiceConnection)'
+#                     scriptType: bash
+#                     scriptLocation: inlineScript
+#                     inlineScript: |
+#                       set -euo pipefail
+#                       RG=$(az aks list --query "[?contains(name, 'aks-aks-sre')].resourceGroup | [0]" -o tsv)
+#                       AKS=$(az aks list --query "[?contains(name, 'aks-aks-sre')].name | [0]" -o tsv)
+#                       ACR_LOGIN_SERVER=$(az acr show --name "$(acrName)" --query loginServer -o tsv)
+#                       LAW_ID=$(az monitor log-analytics workspace list -g "$RG" --query '[0].customerId' -o tsv)
+#                       OAIE=$(az cognitiveservices account list -g "$RG" --query '[0].properties.endpoint' -o tsv)
+#                       ANALYSER_ID=$(az identity list -g "$RG" --query "[?contains(name, 'analyser')].clientId | [0]" -o tsv)
+#                       COLLECTOR_ID=$(az identity list -g "$RG" --query "[?contains(name, 'collector')].clientId | [0]" -o tsv)
 
-                      az aks get-credentials -g "$RG" -n "$AKS" --overwrite-existing
-                      kubectl create namespace sre --dry-run=client -o yaml | kubectl apply -f -
+#                       az aks get-credentials -g "$RG" -n "$AKS" --overwrite-existing
+#                       kubectl create namespace sre --dry-run=client -o yaml | kubectl apply -f -
 
-                      helm upgrade --install sre-api charts/sre-api \
-                        --namespace sre \
-                        --set image.repository="$ACR_LOGIN_SERVER/sre-api" \
-                        --set image.tag="$(imageTag)" \
-                        --set collectorImage.repository="$ACR_LOGIN_SERVER/incident-collector" \
-                        --set collectorImage.tag="$(imageTag)" \
-                        --set analyserImage.repository="$ACR_LOGIN_SERVER/ai-analyser" \
-                        --set analyserImage.tag="$(imageTag)" \
-                        --set azure.openaiEndpoint="$OAIE" \
-                        --set azure.openaiDeployment="$(azureOpenAIDeployment)" \
-                        --set azure.logWorkspaceId="$LAW_ID" \
-                        --set azure.analyserClientId="$ANALYSER_ID" \
-                        --set azure.collectorClientId="$COLLECTOR_ID"
+#                       helm upgrade --install sre-api charts/sre-api \
+#                         --namespace sre \
+#                         --set image.repository="$ACR_LOGIN_SERVER/sre-api" \
+#                         --set image.tag="$(imageTag)" \
+#                         --set collectorImage.repository="$ACR_LOGIN_SERVER/incident-collector" \
+#                         --set collectorImage.tag="$(imageTag)" \
+#                         --set analyserImage.repository="$ACR_LOGIN_SERVER/ai-analyser" \
+#                         --set analyserImage.tag="$(imageTag)" \
+#                         --set azure.openaiEndpoint="$OAIE" \
+#                         --set azure.openaiDeployment="$(azureOpenAIDeployment)" \
+#                         --set azure.logWorkspaceId="$LAW_ID" \
+#                         --set azure.analyserClientId="$ANALYSER_ID" \
+#                         --set azure.collectorClientId="$COLLECTOR_ID"
 
-                      kubectl rollout status deployment/sre-api -n sre --timeout=180s
-                      kubectl rollout status deployment/incident-collector -n sre --timeout=180s
-                      kubectl rollout status deployment/ai-analyser -n sre --timeout=180s
+#                       kubectl rollout status deployment/sre-api -n sre --timeout=180s
+#                       kubectl rollout status deployment/incident-collector -n sre --timeout=180s
+#                       kubectl rollout status deployment/ai-analyser -n sre --timeout=180s
 
-                - task: AzureCLI@2
-                  displayName: Smoke test
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: bash
-                    scriptLocation: scriptPath
-                    scriptPath: scripts/smoke-test.sh
+#                 - task: AzureCLI@2
+#                   displayName: Smoke test
+#                   inputs:
+#                     azureSubscription: '$(azureServiceConnection)'
+#                     scriptType: bash
+#                     scriptLocation: scriptPath
+#                     scriptPath: scripts/smoke-test.sh
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- task: AzureCLI@2
+  displayName: "Test Azure authentication"
+  inputs:
+    azureSubscription: "sc-azure-ai-aks-sre"
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      set -e
+
+      echo "Azure account:"
+      az account show \
+        --query "{name:name, id:id, tenantId:tenantId}" \
+        --output table
+
+      echo ""
+      echo "Resource groups:"
+      az group list \
+        --query "[].name" \
+        --output table
