@@ -542,6 +542,42 @@ stages:
       displayName: "Push image to ACR"
 
 
+- stage: HelmValidation
+  displayName: "Validate Helm Chart"
+
+  jobs:
+  - job: Helm
+    displayName: "Helm Lint and Template"
+
+    pool:
+      name: "MultiOSPool"
+
+    steps:
+
+    - checkout: self
+
+    - task: HelmInstaller@1
+      displayName: "Install Helm"
+
+      inputs:
+        helmVersionToInstall: "latest"
+
+    - powershell: |
+        $ErrorActionPreference = "Stop"
+
+        helm version
+
+        helm lint .\charts\sre-api
+
+        helm template sre-api .\charts\sre-api `
+          --namespace sre `
+          --set image.repository="acrakssreqtyn6.azurecr.io/sre-api" `
+          --set image.tag="test" `
+          --set collector.enabled=false `
+          --set analyser.enabled=false
+      displayName: "Lint and render Helm chart"
+
+
 # ============================================================
 # 5. HELM DEPLOY
 # ============================================================
