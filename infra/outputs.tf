@@ -9,3 +9,7 @@ output "grafana_endpoint" { value = azurerm_dashboard_grafana.grafana.endpoint }
 output "openai_endpoint" { value = azurerm_cognitive_account.openai.endpoint }
 output "analyser_client_id" { value = azurerm_user_assigned_identity.analyser.client_id }
 output "aks_oidc_issuer_url" { value = azurerm_kubernetes_cluster.aks.oidc_issuer_url }
+output "openai_deployment_name" {
+  description = "Azure OpenAI model deployment name"
+  value       = azurerm_cognitive_deployment.openai_model.name
+}

@@ -196,3 +196,21 @@ resource "azurerm_federated_identity_credential" "analyser" {
   issuer   = azurerm_kubernetes_cluster.aks.oidc_issuer_url
   subject  = "system:serviceaccount:sre:ai-analyser"
 }
+
+resource "azurerm_cognitive_deployment" "openai_model" {
+  name                 = var.openai_model_name
+  cognitive_account_id = azurerm_cognitive_account.openai.id
+
+  model {
+    format  = "OpenAI"
+    name    = var.openai_model_name
+    version = var.openai_model_version
+  }
+
+  sku {
+    name     = "Standard"
+    capacity = 1
+  }
+
+  version_upgrade_option = "NoAutoUpgrade"
+}

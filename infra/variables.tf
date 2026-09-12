@@ -25,12 +25,12 @@ variable "aks_kubernetes_version" {
 
 variable "openai_model_name" {
   type    = string
-  default = "gpt-4.1-mini"
+  default = "gpt-5.4-mini"
 }
 
 variable "openai_model_version" {
   type    = string
-  default = "2025-04-14"
+  default = "2026-03-17"
 }
 
 variable "tags" {
