@@ -157,6 +157,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   azure_policy_enabled = true
 
+  microsoft_defender {
+    log_analytics_workspace_id = "/subscriptions/2d1634f0-7a97-4b55-b237-f5b12e52c45c/resourceGroups/DefaultResourceGroup-EUS2/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-2d1634f0-7a97-4b55-b237-f5b12e52c45c-EUS2"
+  }
+
   tags = var.tags
 }
 
