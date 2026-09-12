@@ -238,3 +238,39 @@ steps:
       $env:ARM_USE_AZUREAD = "true"
 
       terraform init -input=false
+
+- task: PowerShell@2
+  displayName: "Terraform Format Check"
+  inputs:
+    targetType: "inline"
+    workingDirectory: "$(Build.SourcesDirectory)/infra"
+    script: |
+      $ErrorActionPreference = "Stop"
+      terraform fmt -check -recursive
+
+- task: PowerShell@2
+  displayName: "Terraform Validate"
+  inputs:
+    targetType: "inline"
+    workingDirectory: "$(Build.SourcesDirectory)/infra"
+    script: |
+      $ErrorActionPreference = "Stop"
+      terraform validate      
+
+- task: AzureCLI@2
+  displayName: "Terraform Plan"
+  inputs:
+    azureSubscription: "$(azureServiceConnection)"
+    addSpnToEnvironment: true
+    scriptType: "ps"
+    scriptLocation: "inlineScript"
+    workingDirectory: "$(Build.SourcesDirectory)/infra"
+    inlineScript: |
+      $ErrorActionPreference = "Stop"
+
+      $env:ARM_USE_OIDC = "true"
+      $env:ARM_USE_AZUREAD = "true"
+
+      terraform plan `
+        -input=false `
+        -out="$(Build.ArtifactStagingDirectory)/tfplan"      
