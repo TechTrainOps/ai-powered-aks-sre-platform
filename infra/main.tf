@@ -130,7 +130,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   default_node_pool {
     name            = "system"
-    vm_size         = "Standard_D4ds_v5"
+    vm_size         = "Standard_D4ds_v6"
     node_count      = 2
     os_disk_size_gb = 80
     vnet_subnet_id  = azurerm_subnet.aks.id
