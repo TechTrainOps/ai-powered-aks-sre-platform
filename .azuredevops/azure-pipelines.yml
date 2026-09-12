@@ -932,81 +932,86 @@ stages:
     # Application Smoke Test
     # --------------------------------------------------------
 
-    - task: PowerShell@2
-      displayName: "Application smoke test"
-      inputs:
-        targetType: "inline"
-        script: |
-          $ErrorActionPreference = "Stop"
+- task: PowerShell@2
+  displayName: "Application smoke test"
+  inputs:
+    targetType: "inline"
+    script: |
+      $ErrorActionPreference = "Stop"
 
-          Write-Host "Starting temporary port-forward..."
+      Write-Host "Starting temporary port-forward..."
 
-          $process = Start-Process `
-            -FilePath "kubectl" `
-            -ArgumentList @(
-              "port-forward",
-              "service/sre-api",
-              "8000:8000",
-              "-n",
-              "$(namespace)"
-            ) `
-            -PassThru `
-            -WindowStyle Hidden
+      $process = Start-Process `
+        -FilePath "kubectl" `
+        -ArgumentList @(
+          "port-forward",
+          "service/sre-api",
+          "8000:8000",
+          "-n",
+          "$(namespace)"
+        ) `
+        -PassThru `
+        -WindowStyle Hidden
 
-          try {
+      try {
 
-            Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 10
 
-            Write-Host "Testing /healthz"
+        Write-Host "Testing /healthz"
 
-            $health = Invoke-RestMethod `
-              -Uri "http://127.0.0.1:8000/healthz" `
-              -Method Get
+        $health = Invoke-RestMethod `
+          -Uri "http://127.0.0.1:8000/healthz" `
+          -Method Get
 
-            Write-Host "Health response:"
-            $health | ConvertTo-Json
+        Write-Host "Health response:"
+        $health | ConvertTo-Json
 
-            if ($health.status -ne "healthy") {
-              throw "Health check failed."
-            }
+        if ($health.status -ne "healthy") {
+          throw "Health check failed."
+        }
 
-            Write-Host "Testing /readyz"
+        Write-Host "Testing /readyz"
 
-            $ready = Invoke-RestMethod `
-              -Uri "http://127.0.0.1:8000/readyz" `
-              -Method Get
+        $ready = Invoke-RestMethod `
+          -Uri "http://127.0.0.1:8000/readyz" `
+          -Method Get
 
-            Write-Host "Readiness response:"
-            $ready | ConvertTo-Json
+        Write-Host "Readiness response:"
+        $ready | ConvertTo-Json
 
-            if ($ready.status -ne "ready") {
-              throw "Readiness check failed."
-            }
+        if ($ready.status -ne "ready") {
+          throw "Readiness check failed."
+        }
 
-            Write-Host "Testing /metrics"
+        Write-Host "Testing /metrics"
 
-            $metrics = Invoke-WebRequest `
-              -Uri "http://127.0.0.1:8000/metrics" `
-              -Method Get
+        $metrics = Invoke-WebRequest `
+          -Uri "http://127.0.0.1:8000/metrics" `
+          -Method Get `
+          -UseBasicParsing
 
-            if ($metrics.StatusCode -ne 200) {
-              throw "Metrics endpoint returned HTTP $($metrics.StatusCode)"
-            }
+        Write-Host "Metrics HTTP status: $($metrics.StatusCode)"
 
-            if ($metrics.Content -notmatch "http_requests_total") {
-              throw "Expected Prometheus metric not found."
-            }
+        if ($metrics.StatusCode -ne 200) {
+          throw "Metrics endpoint returned HTTP $($metrics.StatusCode)"
+        }
 
-            Write-Host "Application smoke tests passed."
+        if ($metrics.Content -notmatch "http_requests_total") {
+          throw "Expected Prometheus metric 'http_requests_total' not found."
+        }
 
-          }
-          finally {
+        Write-Host "Prometheus metrics endpoint is healthy."
 
-            if ($process -and -not $process.HasExited) {
-              Stop-Process `
-                -Id $process.Id `
-                -Force `
-                -ErrorAction SilentlyContinue
-            }
+        Write-Host "Application smoke tests passed."
 
-          }
+      }
+      finally {
+
+        if ($process -and -not $process.HasExited) {
+          Stop-Process `
+            -Id $process.Id `
+            -Force `
+            -ErrorAction SilentlyContinue
+        }
+
+      }
