@@ -792,32 +792,33 @@ stages:
     # Helm Deploy
     # --------------------------------------------------------
 
-    - task: PowerShell@2
-      displayName: "Helm Deploy"
-      inputs:
-        targetType: "inline"
-        workingDirectory: '$(Build.SourcesDirectory)'
-        script: |
-          $ErrorActionPreference = "Stop"
+- task: PowerShell@2
+  displayName: "Helm Deploy"
+  inputs:
+    targetType: "inline"
+    workingDirectory: '$(Build.SourcesDirectory)'
+    script: |
+      $ErrorActionPreference = "Stop"
 
-          Write-Host "Deploying image:"
-          Write-Host "$(acrLoginServer)/sre-api:$(Build.BuildId)"
+      Write-Host "Deploying image:"
+      Write-Host "$(acrLoginServer)/sre-api:$(Build.BuildId)"
 
-          helm upgrade --install sre-api .\charts\sre-api `
-            --namespace "$(namespace)" `
-            --create-namespace `
-            --set image.repository="$(acrLoginServer)/sre-api" `
-            --set image.tag="$(Build.BuildId)" `
-            --set collector.enabled=false `
-            --set analyser.enabled=false `
-            --set metrics.enabled=true `
-            --set-string collector.webhookToken="$env:COLLECTOR_WEBHOOK_TOKEN" `
-            --wait `
-            --timeout 10m
-          env:
-            COLLECTOR_WEBHOOK_TOKEN: $(collectorWebhookToken)
+      helm upgrade --install sre-api .\charts\sre-api `
+        --namespace "$(namespace)" `
+        --create-namespace `
+        --set image.repository="$(acrLoginServer)/sre-api" `
+        --set image.tag="$(Build.BuildId)" `
+        --set collector.enabled=true `
+        --set analyser.enabled=false `
+        --set metrics.enabled=true `
+        --set-string collector.webhookToken="$env:COLLECTOR_WEBHOOK_TOKEN" `
+        --wait `
+        --timeout 10m
 
-          Write-Host "Helm deployment completed successfully."
+      Write-Host "Helm deployment completed successfully."
+
+  env:
+    COLLECTOR_WEBHOOK_TOKEN: $(collectorWebhookToken)
 
     # --------------------------------------------------------
     # Deployment Status
