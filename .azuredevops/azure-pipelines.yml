@@ -607,6 +607,7 @@ stages:
             --set image.tag="$(Build.BuildId)" `
             --set collector.enabled=false `
             --set analyser.enabled=false
+            --set metrics.enabled=true
 
     # --------------------------------------------------------
     # Helm Template Validation
@@ -628,6 +629,7 @@ stages:
             --set image.tag="$(Build.BuildId)" `
             --set collector.enabled=false `
             --set analyser.enabled=false `
+             --set metrics.enabled=true `
             --output-dir "$(Build.ArtifactStagingDirectory)\helm-rendered"
 
           Write-Host "Helm chart rendered successfully."
@@ -768,6 +770,7 @@ stages:
             --set image.tag="$(Build.BuildId)" `
             --set collector.enabled=false `
             --set analyser.enabled=false `
+            --set metrics.enabled=true `
             --wait `
             --timeout 10m
 

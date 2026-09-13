@@ -8,8 +8,10 @@ spec:
   selector:
     app: sre-api
   ports:
-    - port: {{ .Values.service.port }}
-      targetPort: 8000
+    - name: metrics
+      port: 8000
+      targetPort: metrics
+      protocol: TCP
 
 {{- if .Values.collector.enabled }}
 ---

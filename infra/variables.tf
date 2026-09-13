@@ -41,3 +41,9 @@ variable "tags" {
     owner       = "portfolio"
   }
 }
+
+variable "enable_managed_prometheus" {
+  type        = bool
+  description = "Enable Azure Monitor managed service for Prometheus on AKS."
+  default     = true
+}

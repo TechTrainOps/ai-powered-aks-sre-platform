@@ -54,5 +54,8 @@ hpa:
   maxReplicas: 8
   cpuUtilization: 70
 
+metrics:
+  enabled: true
+
 pdb:
   minAvailable: 1
