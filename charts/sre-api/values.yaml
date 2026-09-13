@@ -8,7 +8,7 @@ collector:
   webhookToken: ""
 
 collectorImage:
-  repository: example.azurecr.io/incident-collector
+  repository: "example.azurecr.io/incident-collector"
   tag: "1.0.0"
   pullPolicy: IfNotPresent
 
