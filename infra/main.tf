@@ -127,8 +127,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
   kubernetes_version  = var.aks_kubernetes_version
 
   monitor_metrics {
-    annotations_allowed = ""
-    labels_allowed      = ""
+    annotations_allowed = null
+    labels_allowed      = null
   }
 
   oidc_issuer_enabled       = true
