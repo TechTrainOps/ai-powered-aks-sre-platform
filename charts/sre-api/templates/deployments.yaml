@@ -59,7 +59,7 @@ metadata:
   labels:
     app: incident-collector
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: incident-collector
@@ -71,6 +71,12 @@ spec:
         azure.workload.identity/use: "true"
     spec:
       serviceAccountName: incident-collector
+      automountServiceAccountToken: true
+
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
 
       containers:
         - name: incident-collector
@@ -78,27 +84,54 @@ spec:
           imagePullPolicy: {{ .Values.collectorImage.pullPolicy }}
 
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
+              protocol: TCP
 
           env:
-            - name: LOG_WORKSPACE_ID
-              value: {{ .Values.azure.logWorkspaceId | quote }}
+            - name: INCIDENT_NAMESPACE
+              value: {{ .Values.namespace | quote }}
 
-            - name: AI_ANALYSER_URL
-              value: "http://ai-analyser:8080"
+            - name: INCIDENT_DIR
+              value: "/tmp/incidents"
+
+            - name: COLLECTOR_WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: incident-collector-secret
+                  key: webhook-token
 
           resources:
 {{ toYaml .Values.resources | indent 12 }}
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: incident-data
+              mountPath: /tmp/incidents
 
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
 
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+      volumes:
+        - name: incident-data
+          emptyDir: {}
 {{- end }}
 
 {{- if .Values.analyser.enabled }}

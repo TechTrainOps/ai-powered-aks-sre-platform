@@ -20,13 +20,17 @@ kind: Service
 metadata:
   name: incident-collector
   namespace: {{ .Values.namespace }}
+  labels:
+    app: incident-collector
 spec:
-  type: {{ .Values.collectorService.type }}
   selector:
     app: incident-collector
   ports:
-    - port: {{ .Values.collectorService.port }}
-      targetPort: 8080
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  type: {{ .Values.collectorService.type }}
 {{- end }}
 
 {{- if .Values.analyser.enabled }}

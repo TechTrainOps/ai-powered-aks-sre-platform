@@ -4,7 +4,8 @@ image:
   pullPolicy: IfNotPresent
 
 collector:
-  enabled: false
+  enabled: true
+  webhookToken: ""
 
 collectorImage:
   repository: example.azurecr.io/incident-collector
@@ -28,7 +29,7 @@ service:
 
 collectorService:
   port: 8080
-  type: ClusterIP
+  type: LoadBalancer
 
 analyserService:
   port: 8080

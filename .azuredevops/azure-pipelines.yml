@@ -449,6 +449,20 @@ stages:
 
       displayName: "Build Docker image"
 
+    # incident collector
+
+    - bash: |
+        set -euo pipefail
+
+        cd "$(Build.SourcesDirectory)/incident-collector"
+
+        docker build \
+           -t "$(acrLoginServer)/incident-collector:$(Build.BuildId)" \
+           -t "$(acrLoginServer)/incident-collector:latest" \
+           .
+
+      displayName: "Build incident collector image" 
+
     # --------------------------------------------------------
     # Trivy Security Scan
     # --------------------------------------------------------
@@ -480,6 +494,18 @@ stages:
 
       displayName: "Security scan"
 
+    # incident collector
+
+    - bash: |
+        set -euo pipefail
+
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --ignore-unfixed \
+          "$(acrLoginServer)/incident-collector:$(Build.BuildId)"
+
+      displayName: "Scan incident collector image"  
+
     # --------------------------------------------------------
     # Login to ACR
     # --------------------------------------------------------
@@ -510,6 +536,19 @@ stages:
           "$(acrLoginServer)/sre-api:latest"
 
       displayName: "Push image to ACR"
+
+    # incident collector
+
+    - bash: |
+        set -euo pipefail
+
+        docker push \
+          "$(acrLoginServer)/incident-collector:$(Build.BuildId)"
+
+        docker push \
+          "$(acrLoginServer)/incident-collector:latest"
+
+      displayName: "Push incident collector image"
 
 
 # ============================================================
@@ -605,7 +644,7 @@ stages:
           helm lint .\charts\sre-api `
             --set image.repository="$(acrLoginServer)/sre-api" `
             --set image.tag="$(Build.BuildId)" `
-            --set collector.enabled=false `
+            --set collector.enabled=true `
             --set analyser.enabled=false `
             --set metrics.enabled=true
 
@@ -627,9 +666,10 @@ stages:
             --namespace "$(namespace)" `
             --set image.repository="$(acrLoginServer)/sre-api" `
             --set image.tag="$(Build.BuildId)" `
-            --set collector.enabled=false `
+            --set collector.enabled=true `
             --set analyser.enabled=false `
             --set metrics.enabled=true `
+            --set-string collector.webhookToken="helm-validation-token" `
             --output-dir "$(Build.ArtifactStagingDirectory)\helm-rendered"
 
           Write-Host "Helm chart rendered successfully."
@@ -771,8 +811,11 @@ stages:
             --set collector.enabled=false `
             --set analyser.enabled=false `
             --set metrics.enabled=true `
+            --set-string collector.webhookToken="$env:COLLECTOR_WEBHOOK_TOKEN" `
             --wait `
             --timeout 10m
+          env:
+            COLLECTOR_WEBHOOK_TOKEN: $(collectorWebhookToken)
 
           Write-Host "Helm deployment completed successfully."
 
