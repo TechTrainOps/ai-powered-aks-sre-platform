@@ -606,7 +606,7 @@ stages:
             --set image.repository="$(acrLoginServer)/sre-api" `
             --set image.tag="$(Build.BuildId)" `
             --set collector.enabled=false `
-            --set analyser.enabled=false
+            --set analyser.enabled=false `
             --set metrics.enabled=true
 
     # --------------------------------------------------------
@@ -629,7 +629,7 @@ stages:
             --set image.tag="$(Build.BuildId)" `
             --set collector.enabled=false `
             --set analyser.enabled=false `
-             --set metrics.enabled=true `
+            --set metrics.enabled=true `
             --output-dir "$(Build.ArtifactStagingDirectory)\helm-rendered"
 
           Write-Host "Helm chart rendered successfully."
