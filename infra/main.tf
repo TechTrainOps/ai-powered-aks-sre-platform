@@ -126,6 +126,11 @@ resource "azurerm_kubernetes_cluster" "aks" {
   dns_prefix          = local.aks_name
   kubernetes_version  = var.aks_kubernetes_version
 
+  monitor_metrics {
+    annotations_allowed = ""
+    labels_allowed      = ""
+  }
+
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
