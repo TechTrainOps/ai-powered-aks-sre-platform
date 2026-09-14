@@ -240,16 +240,19 @@ def analyse_incident(
         "evidence": incident.get("evidence", {}),
     }
 
-    request = urllib.request.Request(
-        analyser_url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
     try:
+        request = urllib.request.Request(
+            analyser_url,
+            data=json.dumps(
+                payload,
+                default=str,
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
         with urllib.request.urlopen(
             request,
             timeout=60,
@@ -278,7 +281,7 @@ def analyse_incident(
         return {
             "status": "failed",
             "error": (
-                f"Unable to reach AI Analyser: {exc}"
+                f"Unable to analyse incident: {exc}"
             ),
         }
 
