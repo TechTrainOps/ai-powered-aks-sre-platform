@@ -104,6 +104,9 @@ spec:
                   name: incident-collector-secret
                   key: webhook-token
 
+            - name: AI_ANALYSER_URL
+              value: {{ .Values.collector.aiAnalyserUrl | quote }}      
+
           resources:
 {{ toYaml .Values.resources | indent 12 }}
 

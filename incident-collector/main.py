@@ -1,6 +1,8 @@
 import hmac
 import json
 import os
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +20,11 @@ app = FastAPI(
 
 INCIDENT_NAMESPACE = os.getenv("INCIDENT_NAMESPACE", "sre")
 WEBHOOK_TOKEN = os.getenv("COLLECTOR_WEBHOOK_TOKEN", "")
+
+AI_ANALYSER_URL = os.getenv(
+    "AI_ANALYSER_URL",
+    "http://ai-analyser:8080",
+)
 
 INCIDENT_DIR = Path(
     os.getenv("INCIDENT_DIR", "/tmp/incidents")
@@ -216,6 +223,64 @@ def collect_evidence() -> dict[str, Any]:
         "logs": logs,
     }
 
+def analyse_incident(
+    incident: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Send the collected incident context to the AI Analyser.
+    """
+
+    analyser_url = (
+        f"{AI_ANALYSER_URL.rstrip('/')}/analyse"
+    )
+
+    payload = {
+        "incident_id": incident["incident_id"],
+        "alert": incident.get("alert", {}),
+        "evidence": incident.get("evidence", {}),
+    }
+
+    request = urllib.request.Request(
+        analyser_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=60,
+        ) as response:
+            response_body = response.read().decode(
+                "utf-8"
+            )
+
+        return json.loads(response_body)
+
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        return {
+            "status": "failed",
+            "error": (
+                f"AI Analyser returned HTTP "
+                f"{exc.code}: {response_body}"
+            ),
+        }
+
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "error": (
+                f"Unable to reach AI Analyser: {exc}"
+            ),
+        }
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
@@ -268,6 +333,10 @@ async def receive_alert(
         "evidence": evidence,
     }
 
+    ai_analysis = analyse_incident(incident)
+
+    incident["ai_analysis"] = ai_analysis
+
     incident_file = INCIDENT_DIR / f"{incident_id}.json"
 
     incident_file.write_text(
@@ -287,6 +356,12 @@ async def receive_alert(
             "monitor_condition"
         ),
         "incident_file": str(incident_file),
+        "ai_analysis_status": (
+        "completed"
+        if ai_analysis.get("status") != "failed"
+        else "failed"
+    ),
+    "ai_analysis": ai_analysis,
     }
 
 

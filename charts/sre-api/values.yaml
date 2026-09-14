@@ -6,6 +6,7 @@ image:
 collector:
   enabled: true
   webhookToken: ""
+  aiAnalyserUrl: "http://ai-analyser:8080"
 
 collectorImage:
   repository: "example.azurecr.io/incident-collector"
