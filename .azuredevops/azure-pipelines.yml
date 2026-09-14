@@ -1443,54 +1443,157 @@ stages:
     # AI analyser Health Smoke Test
     # --------------------------------------------------------
 
-    - task: PowerShell@2
-      displayName: "AI analyser smoke test"
-      inputs:
-        targetType: "inline"
-        script: |
-          $ErrorActionPreference = "Stop"
+- task: PowerShell@2
+  displayName: "AI analyser smoke test"
+  inputs:
+    targetType: "inline"
+    script: |
+      $ErrorActionPreference = "Stop"
 
-          Write-Host "Starting temporary AI analyser port-forward..."
+      $localPort = 18081
+      $servicePort = 8080
 
-          $process = Start-Process `
-            -FilePath "kubectl" `
-            -ArgumentList @(
-              "port-forward",
-              "service/ai-analyser",
-              "8081:8080",
-              "-n",
-              "$(namespace)"
-            ) `
-            -PassThru `
-            -WindowStyle Hidden
+      $stdoutFile = "$(Agent.TempDirectory)\ai-analyser-portforward.stdout.log"
+      $stderrFile = "$(Agent.TempDirectory)\ai-analyser-portforward.stderr.log"
 
-          try {
+      Remove-Item $stdoutFile, $stderrFile `
+        -Force `
+        -ErrorAction SilentlyContinue
 
-            Start-Sleep -Seconds 10
+      Write-Host "================================================"
+      Write-Host "AI Analyser Smoke Test"
+      Write-Host "================================================"
 
-            Write-Host "Testing AI analyser /healthz"
+      Write-Host "Checking service..."
+      kubectl get service ai-analyser -n "$(namespace)"
 
-            $health = Invoke-RestMethod `
-              -Uri "http://127.0.0.1:8081/healthz" `
-              -Method Get
+      Write-Host ""
+      Write-Host "Checking endpoints..."
+      kubectl get endpoints ai-analyser -n "$(namespace)"
 
-            Write-Host "AI analyser health response:"
-            $health | ConvertTo-Json
+      Write-Host ""
+      Write-Host "Checking pods..."
+      kubectl get pods `
+        -n "$(namespace)" `
+        -l app=ai-analyser `
+        -o wide
 
-            if ($health.status -ne "healthy") {
-              throw "AI analyser health check failed."
+      Write-Host ""
+      Write-Host "Starting port-forward:"
+      Write-Host "127.0.0.1:$localPort -> service/ai-analyser:$servicePort"
+
+      $process = Start-Process `
+        -FilePath "kubectl" `
+        -ArgumentList @(
+          "port-forward",
+          "service/ai-analyser",
+          "${localPort}:${servicePort}",
+          "-n",
+          "$(namespace)",
+          "--address",
+          "127.0.0.1"
+        ) `
+        -PassThru `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdoutFile `
+        -RedirectStandardError $stderrFile
+
+      try {
+
+        $portReady = $false
+
+        for ($i = 1; $i -le 30; $i++) {
+
+          Start-Sleep -Seconds 1
+
+          if ($process.HasExited) {
+
+            Write-Host ""
+            Write-Host "kubectl port-forward exited."
+            Write-Host "Exit code: $($process.ExitCode)"
+
+            if (Test-Path $stdoutFile) {
+              Write-Host ""
+              Write-Host "========== PORT-FORWARD STDOUT =========="
+              Get-Content $stdoutFile
             }
 
-            Write-Host "AI analyser smoke test passed."
-
-          }
-          finally {
-
-            if ($process -and -not $process.HasExited) {
-              Stop-Process `
-                -Id $process.Id `
-                -Force `
-                -ErrorAction SilentlyContinue
+            if (Test-Path $stderrFile) {
+              Write-Host ""
+              Write-Host "========== PORT-FORWARD STDERR =========="
+              Get-Content $stderrFile
             }
 
+            throw "AI analyser port-forward process terminated unexpectedly."
           }
+
+          $connection = Test-NetConnection `
+            -ComputerName "127.0.0.1" `
+            -Port $localPort `
+            -WarningAction SilentlyContinue
+
+          if ($connection.TcpTestSucceeded) {
+            $portReady = $true
+            Write-Host "Port-forward is ready."
+            break
+          }
+
+          Write-Host "Waiting for port-forward... attempt $i/30"
+        }
+
+        if (-not $portReady) {
+
+          Write-Host ""
+          Write-Host "========== PORT-FORWARD STDOUT =========="
+
+          if (Test-Path $stdoutFile) {
+            Get-Content $stdoutFile
+          }
+
+          Write-Host ""
+          Write-Host "========== PORT-FORWARD STDERR =========="
+
+          if (Test-Path $stderrFile) {
+            Get-Content $stderrFile
+          }
+
+          throw "AI analyser port-forward did not become ready within 30 seconds."
+        }
+
+        Write-Host ""
+        Write-Host "Testing AI analyser /healthz..."
+
+        $health = Invoke-RestMethod `
+          -Uri "http://127.0.0.1:$localPort/healthz" `
+          -Method Get
+
+        Write-Host ""
+        Write-Host "Health response:"
+        $health | ConvertTo-Json
+
+        if ($health.status -ne "healthy") {
+          throw "AI analyser health check failed."
+        }
+
+        Write-Host ""
+        Write-Host "AI analyser smoke test passed."
+
+      }
+      finally {
+
+        if ($process -and -not $process.HasExited) {
+          Stop-Process `
+            -Id $process.Id `
+            -Force `
+            -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path $stdoutFile) {
+          Remove-Item $stdoutFile -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path $stderrFile) {
+          Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue
+        }
+
+      }
