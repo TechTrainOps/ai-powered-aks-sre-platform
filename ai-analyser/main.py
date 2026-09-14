@@ -80,6 +80,7 @@ def get_openai_client() -> OpenAI:
     return OpenAI(
         base_url=f"{AZURE_OPENAI_ENDPOINT}/openai/v1/",
         api_key=token_provider(),
+        max_retries=5,
     )
 
 

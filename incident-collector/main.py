@@ -190,7 +190,7 @@ def collect_logs(
             content = core_api.read_namespaced_pod_log(
                 name=pod_name,
                 namespace=INCIDENT_NAMESPACE,
-                tail_lines=200,
+                tail_lines=50,
             )
 
             logs[pod_name] = content
