@@ -23,6 +23,7 @@ spec:
         - name: sre-api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+
           ports:
             - name: metrics
               containerPort: 8000
@@ -74,6 +75,8 @@ spec:
       automountServiceAccountToken: true
 
       securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault

@@ -463,6 +463,23 @@ stages:
 
       displayName: "Build incident collector image" 
 
+
+    - bash: |
+        set -euo pipefail
+
+        USER_ID=$(docker inspect "$(acrLoginServer)/incident-collector:$(Build.BuildId)" \
+          --format '{{.Config.User}}')
+
+        echo "Container USER: $USER_ID"
+
+        if [[ "$USER_ID" != "10001:10001" ]]; then
+          echo "ERROR: Incident collector image must run as UID/GID 10001."
+          exit 1
+        fi
+
+        echo "Incident collector image user validation passed."
+      displayName: "Validate incident collector security context" 
+
     # --------------------------------------------------------
     # Trivy Security Scan
     # --------------------------------------------------------
