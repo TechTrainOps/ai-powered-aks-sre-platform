@@ -396,6 +396,27 @@ stages:
           Write-Host ""
           Write-Host "Terraform OpenAI deployment output verified successfully."
 
+          $analyserClientId = terraform output -raw analyser_client_id
+
+          if ($LASTEXITCODE -ne 0) {
+          throw "Failed to read analyser_client_id from Terraform."
+          }
+
+          $analyserClientId = $analyserClientId.Trim()
+
+          if ([string]::IsNullOrWhiteSpace($analyserClientId)) {
+          throw "analyser_client_id Terraform output is empty."
+          }
+
+          $analyserClientIdFile = "$(Build.ArtifactStagingDirectory)\analyser-client-id.txt"
+          Set-Content `
+            -Path $analyserClientIdFile `
+            -Value $analyserClientId `
+            -NoNewline `
+            -Encoding UTF8
+
+          Write-Host "Analyser client ID artifact created."
+
     # --------------------------------------------------------
     # Publish Terraform Outputs
     # --------------------------------------------------------
@@ -406,7 +427,13 @@ stages:
         targetPath: '$(Build.ArtifactStagingDirectory)\terraform-outputs.json'
         artifact: "terraform-outputs"
         publishLocation: "pipeline"
-
+ 
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish Analyser Client ID"
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)\analyser-client-id.txt'
+        artifact: "analyser-client-id"
+        publishLocation: "pipeline"
 
 # ============================================================
 # 3. APPLICATION TESTS
@@ -814,6 +841,12 @@ stages:
         artifact: "terraform-outputs"
         path: '$(Pipeline.Workspace)\terraform-outputs'
 
+    - task: DownloadPipelineArtifact@2
+      displayName: "Download Analyser Client ID"
+      inputs:
+        artifact: "analyser-client-id"
+        path: '$(Pipeline.Workspace)\analyser-client-id'    
+
     # --------------------------------------------------------
     # Read infrastructure details
     # --------------------------------------------------------
@@ -885,6 +918,28 @@ stages:
           Write-Host "##vso[task.setvariable variable=openAiEndpoint]$openAiEndpoint"
           Write-Host "##vso[task.setvariable variable=openAiDeployment]$openAiDeployment"
 
+    - task: PowerShell@2
+      displayName: "Read analyser client ID"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          $clientIdFile = "$(Pipeline.Workspace)\analyser-client-id\analyser-client-id.txt"
+
+          if (-not (Test-Path $clientIdFile)) {
+            throw "Analyser client ID artifact not found: $clientIdFile"
+          }
+
+          $analyserClientId = (Get-Content $clientIdFile -Raw).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($analyserClientId)) {
+            throw "Analyser client ID artifact is empty."
+          }
+
+          Write-Host "Analyser client ID loaded successfully."
+          Write-Host "##vso[task.setvariable variable=analyserClientId]$analyserClientId"
+
     # --------------------------------------------------------
     # Helm Version
     # --------------------------------------------------------
@@ -947,6 +1002,7 @@ stages:
             --set analyserImage.tag="$(Build.BuildId)" `
             --set-string azure.openaiEndpoint="$(openAiEndpoint)" `
             --set-string azure.openaiDeployment="$(openAiDeployment)" `
+            --set-string azure.analyserClientId="$(analyserClientId)" `
             --set metrics.enabled=true `
             --set-string collector.webhookToken="helm-validation-token" `
             --output-dir "$(Build.ArtifactStagingDirectory)\helm-rendered"
@@ -1003,6 +1059,13 @@ stages:
       inputs:
         artifact: "terraform-outputs"
         path: '$(Pipeline.Workspace)\terraform-outputs'
+
+
+    - task: DownloadPipelineArtifact@2
+      displayName: "Download Analyser Client ID"
+      inputs:
+        artifact: "analyser-client-id"
+        path: '$(Pipeline.Workspace)\analyser-client-id' 
 
     # --------------------------------------------------------
     # Install Helm
@@ -1081,6 +1144,28 @@ stages:
           Write-Host "##vso[task.setvariable variable=openAiEndpoint]$openAiEndpoint"
           Write-Host "##vso[task.setvariable variable=openAiDeployment]$openAiDeployment"
 
+    - task: PowerShell@2
+      displayName: "Read analyser client ID"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          $clientIdFile = "$(Pipeline.Workspace)\analyser-client-id\analyser-client-id.txt"
+
+          if (-not (Test-Path $clientIdFile)) {
+            throw "Analyser client ID artifact not found: $clientIdFile"
+          }
+
+          $analyserClientId = (Get-Content $clientIdFile -Raw).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($analyserClientId)) {
+            throw "Analyser client ID artifact is empty."
+          }
+
+          Write-Host "Analyser client ID loaded successfully."
+          Write-Host "##vso[task.setvariable variable=analyserClientId]$analyserClientId"
+
     # --------------------------------------------------------
     # Helm Deploy
     # --------------------------------------------------------
@@ -1121,6 +1206,7 @@ stages:
             --set analyserImage.tag="$(Build.BuildId)" `
             --set-string azure.openaiEndpoint="$(openAiEndpoint)" `
             --set-string azure.openaiDeployment="$(openAiDeployment)" `
+            --set-string azure.analyserClientId="$(analyserClientId)" `
             --set metrics.enabled=true `
             --set-string collector.webhookToken="$env:COLLECTOR_WEBHOOK_TOKEN" `
             --wait `
