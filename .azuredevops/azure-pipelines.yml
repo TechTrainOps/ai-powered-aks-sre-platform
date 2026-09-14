@@ -268,6 +268,63 @@ stages:
             "$(Pipeline.Workspace)\terraform-plan\tfplan"
 
     # --------------------------------------------------------
+    # Verify Terraform State After Apply
+    # --------------------------------------------------------
+
+    - task: AzureCLI@2
+      displayName: "Verify Terraform OpenAI State After Apply"
+      inputs:
+        azureSubscription: "$(azureServiceConnection)"
+        addSpnToEnvironment: true
+        scriptType: "ps"
+        scriptLocation: "inlineScript"
+        workingDirectory: '$(Build.SourcesDirectory)\infra'
+        inlineScript: |
+          $ErrorActionPreference = "Stop"
+
+          $subscriptionId = az account show `
+            --query "id" `
+            -o tsv
+
+          $env:TF_VAR_subscription_id = $subscriptionId
+
+          $env:ARM_USE_OIDC = "true"
+          $env:ARM_USE_AZUREAD = "true"
+
+          $env:ARM_CLIENT_ID = $env:servicePrincipalId
+          $env:ARM_TENANT_ID = $env:tenantId
+          $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
+
+          Write-Host "================================================"
+          Write-Host "Terraform State After Apply"
+          Write-Host "================================================"
+
+          terraform state list
+
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "Cognitive Deployment State"
+          Write-Host "================================================"
+
+          terraform state list |
+            Select-String "cognitive_deployment"
+
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "OpenAI Deployment Output"
+          Write-Host "================================================"
+
+          terraform output openai_deployment_name
+
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "All Terraform Outputs"
+          Write-Host "================================================"
+
+          terraform output -json
+
+
+    # --------------------------------------------------------
     # Export Terraform Outputs
     # --------------------------------------------------------
 
@@ -295,7 +352,9 @@ stages:
           $env:ARM_TENANT_ID = $env:tenantId
           $env:ARM_OIDC_AZURE_SERVICE_CONNECTION_ID = $env:AZURESUBSCRIPTION_SERVICE_CONNECTION_ID
 
-          Write-Host "Exporting Terraform outputs..."
+          Write-Host "================================================"
+          Write-Host "Exporting Terraform Outputs"
+          Write-Host "================================================"
 
           $outputFile = "$(Build.ArtifactStagingDirectory)\terraform-outputs.json"
 
@@ -311,8 +370,31 @@ stages:
             [System.Text.UTF8Encoding]::new($false)
           )
 
-          Write-Host "Terraform outputs exported to:"
+          Write-Host ""
+          Write-Host "Terraform output file:"
           Write-Host $outputFile
+
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "OpenAI Deployment From Exported JSON"
+          Write-Host "================================================"
+
+          $parsed = $terraformOutput | ConvertFrom-Json
+
+          if ($null -eq $parsed.openai_deployment_name) {
+            throw "openai_deployment_name is missing from terraform output."
+          }
+
+          $deploymentName = $parsed.openai_deployment_name.value
+
+          Write-Host "Deployment: [$deploymentName]"
+
+          if ([string]::IsNullOrWhiteSpace($deploymentName)) {
+            throw "openai_deployment_name exists but has an empty value."
+          }
+
+          Write-Host ""
+          Write-Host "Terraform OpenAI deployment output verified successfully."
 
     # --------------------------------------------------------
     # Publish Terraform Outputs
@@ -745,23 +827,58 @@ stages:
 
           $outputFile = "$(Pipeline.Workspace)\terraform-outputs\terraform-outputs.json"
 
-          $outputs = Get-Content $outputFile -Raw |
-            ConvertFrom-Json
+          if (-not (Test-Path $outputFile)) {
+            throw "Terraform output artifact not found: $outputFile"
+          }
+
+          Write-Host "================================================"
+          Write-Host "Reading Terraform Output Artifact"
+          Write-Host "================================================"
+
+          $json = Get-Content $outputFile -Raw
+
+          Write-Host "Terraform output artifact size:"
+          Write-Host "$($json.Length) characters"
+
+          $outputs = $json | ConvertFrom-Json
+
+          Write-Host ""
+          Write-Host "Available Terraform outputs:"
+          $outputs.PSObject.Properties.Name | ForEach-Object {
+            Write-Host " - $_"
+          }
+
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "OpenAI Outputs"
+          Write-Host "================================================"
+
+          if ($null -eq $outputs.openai_endpoint) {
+            throw "openai_endpoint is missing from terraform-outputs.json."
+          }
+
+          if ($null -eq $outputs.openai_deployment_name) {
+            throw "openai_deployment_name is missing from terraform-outputs.json."
+          }
 
           $acrLoginServer = $outputs.acr_login_server.value
           $openAiEndpoint = $outputs.openai_endpoint.value
-          $openAiDeployment = $outputs.openai_deployment.value
+          $openAiDeployment = $outputs.openai_deployment_name.value
 
-          Write-Host "ACR Login Server: $acrLoginServer"
-          Write-Host "Azure OpenAI Endpoint: $openAiEndpoint"
-          Write-Host "Azure OpenAI Deployment: $openAiDeployment"
+          Write-Host "ACR Login Server: [$acrLoginServer]"
+          Write-Host "Azure OpenAI Endpoint: [$openAiEndpoint]"
+          Write-Host "Azure OpenAI Deployment: [$openAiDeployment]"
+
+          if ([string]::IsNullOrWhiteSpace($acrLoginServer)) {
+            throw "acr_login_server is empty."
+          }
 
           if ([string]::IsNullOrWhiteSpace($openAiEndpoint)) {
-            throw "openai_endpoint Terraform output is empty."
+            throw "openai_endpoint is empty."
           }
 
           if ([string]::IsNullOrWhiteSpace($openAiDeployment)) {
-            throw "openai_deployment Terraform output is empty."
+            throw "openai_deployment_name is empty in terraform-outputs.json."
           }
 
           Write-Host "##vso[task.setvariable variable=acrLoginServer]$acrLoginServer"
