@@ -16,6 +16,7 @@ stages:
   displayName: "Terraform Plan"
 
   jobs:
+
   - job: Plan
     displayName: "Terraform Plan"
 
@@ -339,8 +340,12 @@ stages:
 
   jobs:
 
-  - job: Test
-    displayName: "Run Application Tests"
+  # ----------------------------------------------------------
+  # sre-api tests
+  # ----------------------------------------------------------
+
+  - job: SreApiTests
+    displayName: "Run sre-api Tests"
 
     pool:
       vmImage: "ubuntu-latest"
@@ -364,7 +369,38 @@ stages:
 
         python -m pytest -v
 
-      displayName: "Run pytest"
+      displayName: "Run sre-api pytest"
+
+  # ----------------------------------------------------------
+  # AI analyser tests
+  # ----------------------------------------------------------
+
+  - job: AiAnalyserTests
+    displayName: "Run AI Analyser Tests"
+
+    pool:
+      vmImage: "ubuntu-latest"
+
+    steps:
+
+    - checkout: self
+
+    - task: UsePythonVersion@0
+      displayName: "Use Python 3.12"
+      inputs:
+        versionSpec: "3.12"
+
+    - bash: |
+        set -euo pipefail
+
+        cd "$(Build.SourcesDirectory)/ai-analyser"
+
+        python -m pip install --upgrade pip
+        python -m pip install -r requirements.txt
+
+        python -m pytest -v
+
+      displayName: "Run AI analyser pytest"
 
 
 # ============================================================
@@ -383,7 +419,7 @@ stages:
   jobs:
 
   - job: Build
-    displayName: "Build sre-api"
+    displayName: "Build sre-api, collector and analyser"
 
     pool:
       vmImage: "ubuntu-latest"
@@ -434,7 +470,7 @@ stages:
       displayName: "Read ACR details"
 
     # --------------------------------------------------------
-    # Docker Build
+    # Docker Build - sre-api
     # --------------------------------------------------------
 
     - bash: |
@@ -447,9 +483,11 @@ stages:
           -t "$(acrLoginServer)/sre-api:latest" \
           .
 
-      displayName: "Build Docker image"
+      displayName: "Build sre-api image"
 
-    # incident collector
+    # --------------------------------------------------------
+    # Docker Build - incident collector
+    # --------------------------------------------------------
 
     - bash: |
         set -euo pipefail
@@ -457,12 +495,31 @@ stages:
         cd "$(Build.SourcesDirectory)/incident-collector"
 
         docker build \
-           -t "$(acrLoginServer)/incident-collector:$(Build.BuildId)" \
-           -t "$(acrLoginServer)/incident-collector:latest" \
-           .
+          -t "$(acrLoginServer)/incident-collector:$(Build.BuildId)" \
+          -t "$(acrLoginServer)/incident-collector:latest" \
+          .
 
-      displayName: "Build incident collector image" 
+      displayName: "Build incident collector image"
 
+    # --------------------------------------------------------
+    # Docker Build - AI analyser
+    # --------------------------------------------------------
+
+    - bash: |
+        set -euo pipefail
+
+        cd "$(Build.SourcesDirectory)/ai-analyser"
+
+        docker build \
+          -t "$(acrLoginServer)/ai-analyser:$(Build.BuildId)" \
+          -t "$(acrLoginServer)/ai-analyser:latest" \
+          .
+
+      displayName: "Build AI analyser image"
+
+    # --------------------------------------------------------
+    # Validate collector image security context
+    # --------------------------------------------------------
 
     - bash: |
         set -euo pipefail
@@ -470,7 +527,7 @@ stages:
         USER_ID=$(docker inspect "$(acrLoginServer)/incident-collector:$(Build.BuildId)" \
           --format '{{.Config.User}}')
 
-        echo "Container USER: $USER_ID"
+        echo "Incident collector container USER: $USER_ID"
 
         if [[ "$USER_ID" != "10001:10001" ]]; then
           echo "ERROR: Incident collector image must run as UID/GID 10001."
@@ -478,10 +535,32 @@ stages:
         fi
 
         echo "Incident collector image user validation passed."
-      displayName: "Validate incident collector security context" 
+
+      displayName: "Validate incident collector security context"
 
     # --------------------------------------------------------
-    # Trivy Security Scan
+    # Validate AI analyser image security context
+    # --------------------------------------------------------
+
+    - bash: |
+        set -euo pipefail
+
+        USER_ID=$(docker inspect "$(acrLoginServer)/ai-analyser:$(Build.BuildId)" \
+          --format '{{.Config.User}}')
+
+        echo "AI analyser container USER: $USER_ID"
+
+        if [[ "$USER_ID" != "10001:10001" ]]; then
+          echo "ERROR: AI analyser image must run as UID/GID 10001."
+          exit 1
+        fi
+
+        echo "AI analyser image user validation passed."
+
+      displayName: "Validate AI analyser security context"
+
+    # --------------------------------------------------------
+    # Trivy Installation
     # --------------------------------------------------------
 
     - bash: |
@@ -504,14 +583,25 @@ stages:
         sudo apt-get update
         sudo apt-get install -y trivy
 
+      displayName: "Install Trivy"
+
+    # --------------------------------------------------------
+    # Trivy - sre-api
+    # --------------------------------------------------------
+
+    - bash: |
+        set -euo pipefail
+
         trivy image \
           --severity HIGH,CRITICAL \
           --ignore-unfixed \
           "$(acrLoginServer)/sre-api:$(Build.BuildId)"
 
-      displayName: "Security scan"
+      displayName: "Scan sre-api image"
 
-    # incident collector
+    # --------------------------------------------------------
+    # Trivy - incident collector
+    # --------------------------------------------------------
 
     - bash: |
         set -euo pipefail
@@ -521,7 +611,21 @@ stages:
           --ignore-unfixed \
           "$(acrLoginServer)/incident-collector:$(Build.BuildId)"
 
-      displayName: "Scan incident collector image"  
+      displayName: "Scan incident collector image"
+
+    # --------------------------------------------------------
+    # Trivy - AI analyser
+    # --------------------------------------------------------
+
+    - bash: |
+        set -euo pipefail
+
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --ignore-unfixed \
+          "$(acrLoginServer)/ai-analyser:$(Build.BuildId)"
+
+      displayName: "Scan AI analyser image"
 
     # --------------------------------------------------------
     # Login to ACR
@@ -540,7 +644,7 @@ stages:
           az acr login --name "$(acrName)"
 
     # --------------------------------------------------------
-    # Push Image
+    # Push sre-api image
     # --------------------------------------------------------
 
     - bash: |
@@ -552,9 +656,11 @@ stages:
         docker push \
           "$(acrLoginServer)/sre-api:latest"
 
-      displayName: "Push image to ACR"
+      displayName: "Push sre-api image"
 
-    # incident collector
+    # --------------------------------------------------------
+    # Push incident collector image
+    # --------------------------------------------------------
 
     - bash: |
         set -euo pipefail
@@ -566,6 +672,21 @@ stages:
           "$(acrLoginServer)/incident-collector:latest"
 
       displayName: "Push incident collector image"
+
+    # --------------------------------------------------------
+    # Push AI analyser image
+    # --------------------------------------------------------
+
+    - bash: |
+        set -euo pipefail
+
+        docker push \
+          "$(acrLoginServer)/ai-analyser:$(Build.BuildId)"
+
+        docker push \
+          "$(acrLoginServer)/ai-analyser:latest"
+
+      displayName: "Push AI analyser image"
 
 
 # ============================================================
@@ -612,11 +733,11 @@ stages:
         path: '$(Pipeline.Workspace)\terraform-outputs'
 
     # --------------------------------------------------------
-    # Read ACR information
+    # Read infrastructure details
     # --------------------------------------------------------
 
     - task: PowerShell@2
-      displayName: "Read ACR details"
+      displayName: "Read infrastructure details"
       inputs:
         targetType: "inline"
         script: |
@@ -628,10 +749,24 @@ stages:
             ConvertFrom-Json
 
           $acrLoginServer = $outputs.acr_login_server.value
+          $openAiEndpoint = $outputs.openai_endpoint.value
+          $openAiDeployment = $outputs.openai_deployment.value
 
           Write-Host "ACR Login Server: $acrLoginServer"
+          Write-Host "Azure OpenAI Endpoint: $openAiEndpoint"
+          Write-Host "Azure OpenAI Deployment: $openAiDeployment"
+
+          if ([string]::IsNullOrWhiteSpace($openAiEndpoint)) {
+            throw "openai_endpoint Terraform output is empty."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($openAiDeployment)) {
+            throw "openai_deployment Terraform output is empty."
+          }
 
           Write-Host "##vso[task.setvariable variable=acrLoginServer]$acrLoginServer"
+          Write-Host "##vso[task.setvariable variable=openAiEndpoint]$openAiEndpoint"
+          Write-Host "##vso[task.setvariable variable=openAiDeployment]$openAiDeployment"
 
     # --------------------------------------------------------
     # Helm Version
@@ -664,7 +799,11 @@ stages:
             --set collector.enabled=true `
             --set collectorImage.repository="$(acrLoginServer)/incident-collector" `
             --set collectorImage.tag="$(Build.BuildId)" `
-            --set analyser.enabled=false `
+            --set analyser.enabled=true `
+            --set analyserImage.repository="$(acrLoginServer)/ai-analyser" `
+            --set analyserImage.tag="$(Build.BuildId)" `
+            --set-string azure.openaiEndpoint="$(openAiEndpoint)" `
+            --set-string azure.openaiDeployment="$(openAiDeployment)" `
             --set metrics.enabled=true
 
     # --------------------------------------------------------
@@ -679,8 +818,6 @@ stages:
         script: |
           $ErrorActionPreference = "Stop"
 
-          $renderedFile = "$(Build.ArtifactStagingDirectory)\rendered-manifest.yaml"
-
           helm template sre-api .\charts\sre-api `
             --namespace "$(namespace)" `
             --set image.repository="$(acrLoginServer)/sre-api" `
@@ -688,7 +825,11 @@ stages:
             --set collector.enabled=true `
             --set collectorImage.repository="$(acrLoginServer)/incident-collector" `
             --set collectorImage.tag="$(Build.BuildId)" `
-            --set analyser.enabled=false `
+            --set analyser.enabled=true `
+            --set analyserImage.repository="$(acrLoginServer)/ai-analyser" `
+            --set analyserImage.tag="$(Build.BuildId)" `
+            --set-string azure.openaiEndpoint="$(openAiEndpoint)" `
+            --set-string azure.openaiDeployment="$(openAiDeployment)" `
             --set metrics.enabled=true `
             --set-string collector.webhookToken="helm-validation-token" `
             --output-dir "$(Build.ArtifactStagingDirectory)\helm-rendered"
@@ -727,7 +868,7 @@ stages:
   jobs:
 
   - job: Deploy
-    displayName: "Deploy sre-api"
+    displayName: "Deploy sre-api, collector and analyser"
 
     pool:
       name: "MultiOSPool"
@@ -788,11 +929,11 @@ stages:
           kubectl get nodes
 
     # --------------------------------------------------------
-    # Read ACR details
+    # Read infrastructure details
     # --------------------------------------------------------
 
     - task: PowerShell@2
-      displayName: "Read ACR details"
+      displayName: "Read infrastructure details"
       inputs:
         targetType: "inline"
         script: |
@@ -804,10 +945,24 @@ stages:
             ConvertFrom-Json
 
           $acrLoginServer = $outputs.acr_login_server.value
+          $openAiEndpoint = $outputs.openai_endpoint.value
+          $openAiDeployment = $outputs.openai_deployment.value
 
           Write-Host "ACR Login Server: $acrLoginServer"
+          Write-Host "Azure OpenAI Endpoint: $openAiEndpoint"
+          Write-Host "Azure OpenAI Deployment: $openAiDeployment"
+
+          if ([string]::IsNullOrWhiteSpace($openAiEndpoint)) {
+            throw "openai_endpoint Terraform output is empty."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($openAiDeployment)) {
+            throw "openai_deployment Terraform output is empty."
+          }
 
           Write-Host "##vso[task.setvariable variable=acrLoginServer]$acrLoginServer"
+          Write-Host "##vso[task.setvariable variable=openAiEndpoint]$openAiEndpoint"
+          Write-Host "##vso[task.setvariable variable=openAiDeployment]$openAiDeployment"
 
     # --------------------------------------------------------
     # Helm Deploy
@@ -821,8 +976,20 @@ stages:
         script: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "Deploying image:"
+          Write-Host "================================================"
+          Write-Host "Deployment Images"
+          Write-Host "================================================"
+
           Write-Host "$(acrLoginServer)/sre-api:$(Build.BuildId)"
+          Write-Host "$(acrLoginServer)/incident-collector:$(Build.BuildId)"
+          Write-Host "$(acrLoginServer)/ai-analyser:$(Build.BuildId)"
+
+          Write-Host "================================================"
+          Write-Host "Azure OpenAI Configuration"
+          Write-Host "================================================"
+
+          Write-Host "Endpoint: $(openAiEndpoint)"
+          Write-Host "Deployment: $(openAiDeployment)"
 
           helm upgrade --install sre-api .\charts\sre-api `
             --namespace "$(namespace)" `
@@ -832,13 +999,18 @@ stages:
             --set collector.enabled=true `
             --set collectorImage.repository="$(acrLoginServer)/incident-collector" `
             --set collectorImage.tag="$(Build.BuildId)" `
-            --set analyser.enabled=false `
+            --set analyser.enabled=true `
+            --set analyserImage.repository="$(acrLoginServer)/ai-analyser" `
+            --set analyserImage.tag="$(Build.BuildId)" `
+            --set-string azure.openaiEndpoint="$(openAiEndpoint)" `
+            --set-string azure.openaiDeployment="$(openAiDeployment)" `
             --set metrics.enabled=true `
             --set-string collector.webhookToken="$env:COLLECTOR_WEBHOOK_TOKEN" `
             --wait `
             --timeout 10m
 
           Write-Host "Helm deployment completed successfully."
+
       env:
         COLLECTOR_WEBHOOK_TOKEN: $(collectorWebhookToken)
 
@@ -853,17 +1025,50 @@ stages:
         script: |
           $ErrorActionPreference = "Stop"
 
+          Write-Host "================================================"
+          Write-Host "sre-api Rollout"
+          Write-Host "================================================"
+
           kubectl rollout status `
             deployment/sre-api `
             -n "$(namespace)" `
             --timeout=300s
 
-          kubectl get pods -n "$(namespace)"
+          Write-Host "================================================"
+          Write-Host "Incident Collector Rollout"
+          Write-Host "================================================"
 
-          kubectl get deployment sre-api `
+          kubectl rollout status `
+            deployment/incident-collector `
+            -n "$(namespace)" `
+            --timeout=300s
+
+          Write-Host "================================================"
+          Write-Host "AI Analyser Rollout"
+          Write-Host "================================================"
+
+          kubectl rollout status `
+            deployment/ai-analyser `
+            -n "$(namespace)" `
+            --timeout=300s
+
+          Write-Host "================================================"
+          Write-Host "Pods"
+          Write-Host "================================================"
+
+          kubectl get pods `
+            -n "$(namespace)" `
+            -o wide
+
+          Write-Host "================================================"
+          Write-Host "Deployments"
+          Write-Host "================================================"
+
+          kubectl get deployments `
             -n "$(namespace)"
 
 
+# ============================================================
 # 7. SMOKE TEST
 # ============================================================
 
@@ -878,7 +1083,7 @@ stages:
   jobs:
 
   - job: Smoke
-    displayName: "Validate sre-api"
+    displayName: "Validate sre-api and AI analyser"
 
     pool:
       name: "MultiOSPool"
@@ -950,21 +1155,21 @@ stages:
             -o wide
 
           Write-Host "================================================"
-          Write-Host "Deployment"
+          Write-Host "Deployments"
           Write-Host "================================================"
 
-          kubectl get deployment sre-api `
+          kubectl get deployment `
             -n "$(namespace)"
 
           Write-Host "================================================"
-          Write-Host "HPA"
+          Write-Host "sre-api HPA"
           Write-Host "================================================"
 
           kubectl get hpa sre-api `
             -n "$(namespace)"
 
           Write-Host "================================================"
-          Write-Host "PDB"
+          Write-Host "sre-api PDB"
           Write-Host "================================================"
 
           kubectl get pdb sre-api `
@@ -979,16 +1184,30 @@ stages:
             -n "$(namespace)" `
             --timeout=300s
 
+          kubectl rollout status `
+            deployment/incident-collector `
+            -n "$(namespace)" `
+            --timeout=300s
+
+          kubectl rollout status `
+            deployment/ai-analyser `
+            -n "$(namespace)" `
+            --timeout=300s
+
     # --------------------------------------------------------
     # Service Validation
     # --------------------------------------------------------
 
     - task: PowerShell@2
-      displayName: "Validate Kubernetes service"
+      displayName: "Validate Kubernetes services"
       inputs:
         targetType: "inline"
         script: |
           $ErrorActionPreference = "Stop"
+
+          Write-Host "================================================"
+          Write-Host "sre-api service"
+          Write-Host "================================================"
 
           kubectl get service sre-api `
             -n "$(namespace)"
@@ -996,18 +1215,38 @@ stages:
           kubectl get endpoints sre-api `
             -n "$(namespace)"
 
+          Write-Host "================================================"
+          Write-Host "Incident collector service"
+          Write-Host "================================================"
+
+          kubectl get service incident-collector `
+            -n "$(namespace)"
+
+          kubectl get endpoints incident-collector `
+            -n "$(namespace)"
+
+          Write-Host "================================================"
+          Write-Host "AI analyser service"
+          Write-Host "================================================"
+
+          kubectl get service ai-analyser `
+            -n "$(namespace)"
+
+          kubectl get endpoints ai-analyser `
+            -n "$(namespace)"
+
     # --------------------------------------------------------
-    # Application Smoke Test
+    # sre-api Application Smoke Test
     # --------------------------------------------------------
 
     - task: PowerShell@2
-      displayName: "Application smoke test"
+      displayName: "sre-api smoke test"
       inputs:
         targetType: "inline"
         script: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "Starting temporary port-forward..."
+          Write-Host "Starting temporary sre-api port-forward..."
 
           $process = Start-Process `
             -FilePath "kubectl" `
@@ -1069,8 +1308,63 @@ stages:
             }
 
             Write-Host "Prometheus metrics endpoint is healthy."
+            Write-Host "sre-api smoke tests passed."
 
-            Write-Host "Application smoke tests passed."
+          }
+          finally {
+
+            if ($process -and -not $process.HasExited) {
+              Stop-Process `
+                -Id $process.Id `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+
+          }
+
+    # --------------------------------------------------------
+    # AI analyser Health Smoke Test
+    # --------------------------------------------------------
+
+    - task: PowerShell@2
+      displayName: "AI analyser smoke test"
+      inputs:
+        targetType: "inline"
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Starting temporary AI analyser port-forward..."
+
+          $process = Start-Process `
+            -FilePath "kubectl" `
+            -ArgumentList @(
+              "port-forward",
+              "service/ai-analyser",
+              "8081:8080",
+              "-n",
+              "$(namespace)"
+            ) `
+            -PassThru `
+            -WindowStyle Hidden
+
+          try {
+
+            Start-Sleep -Seconds 10
+
+            Write-Host "Testing AI analyser /healthz"
+
+            $health = Invoke-RestMethod `
+              -Uri "http://127.0.0.1:8081/healthz" `
+              -Method Get
+
+            Write-Host "AI analyser health response:"
+            $health | ConvertTo-Json
+
+            if ($health.status -ne "healthy") {
+              throw "AI analyser health check failed."
+            }
+
+            Write-Host "AI analyser smoke test passed."
 
           }
           finally {

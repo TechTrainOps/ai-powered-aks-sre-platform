@@ -13,7 +13,7 @@ collectorImage:
   pullPolicy: IfNotPresent
 
 analyser:
-  enabled: false
+  enabled: true
 
 analyserImage:
   repository: example.azurecr.io/ai-analyser
