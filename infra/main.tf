@@ -230,3 +230,39 @@ resource "azurerm_cognitive_deployment" "openai_model" {
 
   version_upgrade_option = "NoAutoUpgrade"
 }
+
+
+resource "azurerm_storage_account" "incident_storage" {
+  name                     = "staiakssreinc2026"
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier              = "Standard"
+  account_replication_type = "LRS"
+
+  min_tls_version = "TLS1_2"
+
+  allow_nested_items_to_be_public = false
+
+  public_network_access_enabled = true
+
+  blob_properties {
+    versioning_enabled = true
+  }
+
+  tags = {
+    project = "ai-aks-sre"
+    purpose = "incident-storage"
+  }
+}
+
+resource "azurerm_storage_container" "incidents" {
+  name                  = "incidents"
+  storage_account_id    = azurerm_storage_account.incident_storage.id
+  container_access_type = "private"
+}
+
+resource "azurerm_role_assignment" "collector_incident_storage" {
+  scope                = azurerm_storage_account.incident_storage.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.collector.principal_id
+}

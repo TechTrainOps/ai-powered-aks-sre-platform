@@ -8,7 +8,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
+from azure.identity import DefaultAzureCredential
+from azure.core.exceptions import ResourceNotFoundError
+from azure.storage.blob import BlobServiceClient
 from fastapi import FastAPI, HTTPException, Query, Request
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
@@ -42,6 +44,43 @@ INCIDENT_DIR = Path(
     )
 )
 
+INCIDENT_STORAGE_ACCOUNT = os.getenv(
+    "INCIDENT_STORAGE_ACCOUNT",
+    "",
+)
+
+INCIDENT_STORAGE_CONTAINER = os.getenv(
+    "INCIDENT_STORAGE_CONTAINER",
+    "incidents",
+)
+
+def get_blob_container_client():
+    """
+    Create an Azure Blob container client using
+    Azure Workload Identity / DefaultAzureCredential.
+    """
+
+    if not INCIDENT_STORAGE_ACCOUNT:
+        raise RuntimeError(
+            "INCIDENT_STORAGE_ACCOUNT is not configured"
+        )
+
+    account_url = (
+        f"https://{INCIDENT_STORAGE_ACCOUNT}"
+        ".blob.core.windows.net"
+    )
+
+    credential = DefaultAzureCredential()
+
+    service_client = BlobServiceClient(
+        account_url=account_url,
+        credential=credential,
+    )
+
+    return service_client.get_container_client(
+        INCIDENT_STORAGE_CONTAINER
+    )
+
 INCIDENT_DIR.mkdir(
     parents=True,
     exist_ok=True,
@@ -57,52 +96,78 @@ def utc_now() -> str:
 
 def save_incident(
     incident: dict[str, Any],
-) -> Path:
+) -> str:
     """
-    Persist an incident as a JSON file.
+    Persist an incident in Azure Blob Storage.
     """
 
-    incident_file = (
-        INCIDENT_DIR
-        / f"{incident['incident_id']}.json"
+    container_client = (
+        get_blob_container_client()
     )
 
-    incident_file.write_text(
-        json.dumps(
-            incident,
-            indent=2,
-            default=str,
-        ),
-        encoding="utf-8",
+    blob_name = (
+        f"{incident['incident_id']}.json"
     )
 
-    return incident_file
+    blob_client = (
+        container_client.get_blob_client(
+            blob_name
+        )
+    )
+
+    incident_json = json.dumps(
+        incident,
+        indent=2,
+        default=str,
+    )
+
+    blob_client.upload_blob(
+        incident_json.encode("utf-8"),
+        overwrite=True,
+    )
+
+    return blob_name
 
 
 def load_incident(
     incident_id: str,
-) -> tuple[dict[str, Any], Path]:
+) -> tuple[dict[str, Any], str]:
     """
-    Load a stored incident from disk.
+    Load an incident from Azure Blob Storage.
     """
 
-    incident_file = (
-        INCIDENT_DIR
-        / f"{incident_id}.json"
+    container_client = (
+        get_blob_container_client()
     )
 
-    if not incident_file.exists():
+    blob_name = (
+        f"{incident_id}.json"
+    )
+
+    blob_client = (
+        container_client.get_blob_client(
+            blob_name
+        )
+    )
+
+    try:
+        downloaded = (
+            blob_client.download_blob()
+            .readall()
+            .decode("utf-8")
+        )
+
+    except ResourceNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail="Incident not found",
-        )
+        ) from exc
 
     try:
         incident = json.loads(
-            incident_file.read_text(
-                encoding="utf-8"
-            )
+            downloaded
         )
+
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=500,
@@ -112,7 +177,7 @@ def load_incident(
             ),
         ) from exc
 
-    return incident, incident_file
+    return incident, blob_name
 
 
 def load_kubernetes_client() -> tuple[
@@ -802,9 +867,9 @@ async def receive_alert(
             "ApprovalPending"
         )
 
-    incident_file = save_incident(
-        incident
-    )
+    incident_blob = save_incident(
+    incident
+        )
 
     return {
         "status": "accepted",
@@ -815,9 +880,7 @@ async def receive_alert(
         "monitor_condition": alert.get(
             "monitor_condition"
         ),
-        "incident_file": str(
-            incident_file
-        ),
+        "incident_blob": incident_blob,
         "ai_analysis_status": (
             "completed"
             if ai_analysis.get(

@@ -21,3 +21,15 @@ output "collector_client_id" {
   description = "Incident Collector managed identity client ID"
   value       = azurerm_user_assigned_identity.collector.client_id
 }
+
+output "incident_storage_account_name" {
+  value = azurerm_storage_account.incident_storage.name
+}
+
+output "incident_storage_container_name" {
+  value = azurerm_storage_container.incidents.name
+}
+
+output "incident_storage_account_endpoint" {
+  value = azurerm_storage_account.incident_storage.primary_blob_endpoint
+}

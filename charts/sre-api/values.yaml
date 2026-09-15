@@ -7,6 +7,8 @@ collector:
   enabled: true
   webhookToken: ""
   aiAnalyserUrl: "http://ai-analyser:8080"
+  incidentStorageAccount: "staiakssreinc2026"
+  incidentStorageContainer: "incidents"
 
 collectorImage:
   repository: "example.azurecr.io/incident-collector"

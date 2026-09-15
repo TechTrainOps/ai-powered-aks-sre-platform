@@ -105,7 +105,13 @@ spec:
                   key: webhook-token
 
             - name: AI_ANALYSER_URL
-              value: {{ .Values.collector.aiAnalyserUrl | quote }}      
+              value: {{ .Values.collector.aiAnalyserUrl | quote }}
+
+            - name: INCIDENT_STORAGE_ACCOUNT
+              value: {{ .Values.collector.incidentStorageAccount | quote }}
+
+            - name: INCIDENT_STORAGE_CONTAINER
+              value: {{ .Values.collector.incidentStorageContainer | quote }}   
 
           resources:
 {{ toYaml .Values.resources | indent 12 }}
