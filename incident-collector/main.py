@@ -1,6 +1,7 @@
 import hmac
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -76,6 +77,42 @@ def save_incident(
     )
 
     return incident_file
+
+
+def load_incident(
+    incident_id: str,
+) -> tuple[dict[str, Any], Path]:
+    """
+    Load a stored incident from disk.
+    """
+
+    incident_file = (
+        INCIDENT_DIR
+        / f"{incident_id}.json"
+    )
+
+    if not incident_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    try:
+        incident = json.loads(
+            incident_file.read_text(
+                encoding="utf-8"
+            )
+        )
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Stored incident contains invalid JSON: "
+                f"{exc}"
+            ),
+        ) from exc
+
+    return incident, incident_file
 
 
 def load_kubernetes_client() -> tuple[
@@ -387,7 +424,8 @@ def analyse_incident(
             timeout=60,
         ) as response:
             response_body = (
-                response.read().decode("utf-8")
+                response.read()
+                .decode("utf-8")
             )
 
         return json.loads(
@@ -417,6 +455,251 @@ def analyse_incident(
                 f"Unable to analyse incident: {exc}"
             ),
         }
+
+
+def restart_sre_api() -> dict[str, Any]:
+    """
+    Restart the sre-api deployment.
+
+    This is the remediation runbook for the demo.
+    """
+
+    _, apps_api = load_kubernetes_client()
+
+    deployment_name = "sre-api"
+
+    try:
+        deployment = (
+            apps_api.read_namespaced_deployment(
+                name=deployment_name,
+                namespace=INCIDENT_NAMESPACE,
+            )
+        )
+
+        existing_annotations = (
+            deployment.spec.template.metadata.annotations
+            if deployment.spec.template.metadata
+            and deployment.spec.template.metadata.annotations
+            else {}
+        )
+
+        annotations = dict(
+            existing_annotations
+        )
+
+        annotations[
+            "sre.azure.com/remediation-restarted-at"
+        ] = utc_now()
+
+        apps_api.patch_namespaced_deployment(
+            name=deployment_name,
+            namespace=INCIDENT_NAMESPACE,
+            body={
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": annotations
+                        }
+                    }
+                }
+            },
+        )
+
+        return {
+            "status": "started",
+            "deployment": deployment_name,
+        }
+
+    except ApiException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to restart sre-api deployment: "
+                f"HTTP {exc.status}: {exc.reason}"
+            ),
+        ) from exc
+
+
+def wait_for_sre_api_rollout(
+    timeout_seconds: int = 120,
+    poll_interval_seconds: int = 5,
+) -> dict[str, Any]:
+    """
+    Wait for the sre-api Deployment rollout to complete.
+    """
+
+    _, apps_api = load_kubernetes_client()
+
+    deployment_name = "sre-api"
+    start_time = time.monotonic()
+
+    while (
+        time.monotonic() - start_time
+        < timeout_seconds
+    ):
+        try:
+            deployment = (
+                apps_api.read_namespaced_deployment(
+                    name=deployment_name,
+                    namespace=INCIDENT_NAMESPACE,
+                )
+            )
+
+            desired_replicas = (
+                deployment.spec.replicas or 0
+            )
+
+            status = (
+                deployment.status
+            )
+
+            updated_replicas = (
+                status.updated_replicas or 0
+            )
+
+            available_replicas = (
+                status.available_replicas or 0
+            )
+
+            unavailable_replicas = (
+                status.unavailable_replicas or 0
+            )
+
+            observed_generation = (
+                status.observed_generation or 0
+            )
+
+            deployment_generation = (
+                deployment.metadata.generation or 0
+            )
+
+            rollout_complete = (
+                observed_generation
+                >= deployment_generation
+                and updated_replicas
+                == desired_replicas
+                and available_replicas
+                == desired_replicas
+                and unavailable_replicas
+                == 0
+            )
+
+            if rollout_complete:
+                return {
+                    "success": True,
+                    "deployment": deployment_name,
+                    "desired_replicas": desired_replicas,
+                    "updated_replicas": updated_replicas,
+                    "available_replicas": available_replicas,
+                    "unavailable_replicas": unavailable_replicas,
+                    "observed_generation": (
+                        observed_generation
+                    ),
+                    "generation": (
+                        deployment_generation
+                    ),
+                }
+
+        except ApiException as exc:
+            return {
+                "success": False,
+                "error": (
+                    "Unable to check rollout status: "
+                    f"HTTP {exc.status}: {exc.reason}"
+                ),
+            }
+
+        time.sleep(
+            poll_interval_seconds
+        )
+
+    return {
+        "success": False,
+        "error": (
+            "sre-api rollout did not complete "
+            f"within {timeout_seconds} seconds"
+        ),
+    }
+
+
+def verify_sre_api() -> dict[str, Any]:
+    """
+    Verify the application after remediation.
+    """
+
+    verification_url = (
+        "http://sre-api:8000"
+    )
+
+    results: dict[str, Any] = {}
+
+    endpoints = {
+        "healthz": "/healthz",
+        "readyz": "/readyz",
+        "demo": "/demo",
+    }
+
+    for name, path in endpoints.items():
+        url = (
+            f"{verification_url}{path}"
+        )
+
+        try:
+            request = urllib.request.Request(
+                url,
+                method="GET",
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=10,
+            ) as response:
+                body = (
+                    response.read()
+                    .decode("utf-8")
+                )
+
+                results[name] = {
+                    "status_code": response.status,
+                    "body": body,
+                }
+
+        except urllib.error.HTTPError as exc:
+            body = (
+                exc.read()
+                .decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+
+            results[name] = {
+                "status_code": exc.code,
+                "body": body,
+            }
+
+        except Exception as exc:
+            results[name] = {
+                "status_code": None,
+                "error": str(exc),
+            }
+
+    success = (
+        results["healthz"].get(
+            "status_code"
+        ) == 200
+        and results["readyz"].get(
+            "status_code"
+        ) == 200
+        and results["demo"].get(
+            "status_code"
+        ) == 200
+    )
+
+    return {
+        "success": success,
+        "endpoints": results,
+    }
 
 
 @app.get("/healthz")
@@ -493,6 +776,10 @@ async def receive_alert(
         },
         "remediation": {
             "status": "NotStarted",
+            "runbook": None,
+            "started_at": None,
+            "completed_at": None,
+            "result": None,
         },
     }
 
@@ -504,11 +791,12 @@ async def receive_alert(
         ai_analysis
     )
 
-    if ai_analysis.get("status") == "failed":
+    if ai_analysis.get(
+        "status"
+    ) == "failed":
         incident["status"] = (
             "AnalysisFailed"
         )
-
     else:
         incident["status"] = (
             "ApprovalPending"
@@ -532,8 +820,9 @@ async def receive_alert(
         ),
         "ai_analysis_status": (
             "completed"
-            if ai_analysis.get("status")
-            != "failed"
+            if ai_analysis.get(
+                "status"
+            ) != "failed"
             else "failed"
         ),
         "ai_analysis": ai_analysis,
@@ -548,25 +837,16 @@ def get_incident(
     Return a stored incident.
     """
 
-    incident_file = (
-        INCIDENT_DIR
-        / f"{incident_id}.json"
+    incident, _ = load_incident(
+        incident_id
     )
 
-    if not incident_file.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Incident not found",
-        )
-
-    return json.loads(
-        incident_file.read_text(
-            encoding="utf-8"
-        )
-    )
+    return incident
 
 
-@app.post("/incidents/{incident_id}/approve")
+@app.post(
+    "/incidents/{incident_id}/approve"
+)
 async def approve_incident(
     incident_id: str,
     request: Request,
@@ -578,16 +858,9 @@ async def approve_incident(
     It does not execute any remediation.
     """
 
-    incident_file = (
-        INCIDENT_DIR
-        / f"{incident_id}.json"
+    incident, _ = load_incident(
+        incident_id
     )
-
-    if not incident_file.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Incident not found",
-        )
 
     try:
         payload = await request.json()
@@ -607,12 +880,6 @@ async def approve_incident(
             status_code=400,
             detail="approved_by is required",
         )
-
-    incident = json.loads(
-        incident_file.read_text(
-            encoding="utf-8"
-        )
-    )
 
     current_status = incident.get(
         "status",
@@ -650,4 +917,191 @@ async def approve_incident(
         "incident_id": incident_id,
         "approved_by": approved_by,
         "approved_at": approved_at,
+    }
+
+
+@app.post(
+    "/incidents/{incident_id}/remediate"
+)
+def remediate_incident(
+    incident_id: str,
+) -> dict[str, Any]:
+    """
+    Execute the approved remediation runbook.
+
+    Remediation is allowed only when the incident
+    has been explicitly approved.
+    """
+
+    incident, _ = load_incident(
+        incident_id
+    )
+
+    current_status = incident.get(
+        "status",
+        "Open",
+    )
+
+    if current_status != "Approved":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Incident must be Approved "
+                "before remediation. "
+                f"Current status: {current_status}"
+            ),
+        )
+
+    remediation = incident.get(
+        "remediation",
+        {},
+    )
+
+    if remediation.get(
+        "status"
+    ) == "Succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail="Remediation already completed",
+        )
+
+    started_at = utc_now()
+
+    remediation["status"] = "Running"
+    remediation["runbook"] = (
+        "restart-sre-api"
+    )
+    remediation["started_at"] = started_at
+    remediation["completed_at"] = None
+    remediation["result"] = None
+
+    incident["remediation"] = (
+        remediation
+    )
+
+    save_incident(
+        incident
+    )
+
+    try:
+        restart_result = restart_sre_api()
+
+        rollout_result = (
+            wait_for_sre_api_rollout()
+        )
+
+        if not rollout_result.get(
+            "success"
+        ):
+            incident["status"] = (
+                "RemediationFailed"
+            )
+
+            incident["remediation"] = {
+                "status": "Failed",
+                "runbook": "restart-sre-api",
+                "started_at": started_at,
+                "completed_at": utc_now(),
+                "result": {
+                    "restart": restart_result,
+                    "rollout": rollout_result,
+                    "verification": None,
+                },
+            }
+
+            save_incident(
+                incident
+            )
+
+            return {
+                "incident_id": incident_id,
+                "status": incident["status"],
+                "remediation": incident[
+                    "remediation"
+                ],
+            }
+
+        verification = verify_sre_api()
+
+        if not verification["success"]:
+            time.sleep(5)
+
+            verification = (
+                verify_sre_api()
+            )
+
+        if verification["success"]:
+            incident["status"] = (
+                "Remediated"
+            )
+
+            incident["remediation"] = {
+                "status": "Succeeded",
+                "runbook": "restart-sre-api",
+                "started_at": started_at,
+                "completed_at": utc_now(),
+                "result": {
+                    "restart": restart_result,
+                    "rollout": rollout_result,
+                    "verification": verification,
+                },
+            }
+
+        else:
+            incident["status"] = (
+                "RemediationFailed"
+            )
+
+            incident["remediation"] = {
+                "status": "Failed",
+                "runbook": "restart-sre-api",
+                "started_at": started_at,
+                "completed_at": utc_now(),
+                "result": {
+                    "restart": restart_result,
+                    "rollout": rollout_result,
+                    "verification": verification,
+                },
+            }
+
+    except HTTPException as exc:
+        incident["status"] = (
+            "RemediationFailed"
+        )
+
+        incident["remediation"] = {
+            "status": "Failed",
+            "runbook": "restart-sre-api",
+            "started_at": started_at,
+            "completed_at": utc_now(),
+            "result": {
+                "error": exc.detail,
+            },
+        }
+
+    except Exception as exc:
+        incident["status"] = (
+            "RemediationFailed"
+        )
+
+        incident["remediation"] = {
+            "status": "Failed",
+            "runbook": "restart-sre-api",
+            "started_at": started_at,
+            "completed_at": utc_now(),
+            "result": {
+                "error": str(exc),
+            },
+        }
+
+    save_incident(
+        incident
+    )
+
+    return {
+        "incident_id": incident_id,
+        "status": incident["status"],
+        "remediation": incident[
+            "remediation"
+        ],
     }

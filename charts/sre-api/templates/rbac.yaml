@@ -5,6 +5,7 @@ metadata:
   name: incident-collector
   namespace: {{ .Values.namespace }}
 rules:
+  # Permissions required for incident evidence collection
   - apiGroups: [""]
     resources:
       - pods
@@ -14,6 +15,16 @@ rules:
       - get
       - list
       - watch
+
+  # Permissions required for the remediation runbook
+  # to restart the sre-api Deployment
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - patch
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
