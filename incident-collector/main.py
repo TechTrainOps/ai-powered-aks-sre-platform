@@ -18,8 +18,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-INCIDENT_NAMESPACE = os.getenv("INCIDENT_NAMESPACE", "sre")
-WEBHOOK_TOKEN = os.getenv("COLLECTOR_WEBHOOK_TOKEN", "")
+
+INCIDENT_NAMESPACE = os.getenv(
+    "INCIDENT_NAMESPACE",
+    "sre",
+)
+
+WEBHOOK_TOKEN = os.getenv(
+    "COLLECTOR_WEBHOOK_TOKEN",
+    "",
+)
 
 AI_ANALYSER_URL = os.getenv(
     "AI_ANALYSER_URL",
@@ -27,13 +35,53 @@ AI_ANALYSER_URL = os.getenv(
 )
 
 INCIDENT_DIR = Path(
-    os.getenv("INCIDENT_DIR", "/tmp/incidents")
+    os.getenv(
+        "INCIDENT_DIR",
+        "/tmp/incidents",
+    )
 )
 
-INCIDENT_DIR.mkdir(parents=True, exist_ok=True)
+INCIDENT_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 
-def load_kubernetes_client() -> tuple[client.CoreV1Api, client.AppsV1Api]:
+def utc_now() -> str:
+    """
+    Return the current UTC timestamp in ISO 8601 format.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
+def save_incident(
+    incident: dict[str, Any],
+) -> Path:
+    """
+    Persist an incident as a JSON file.
+    """
+
+    incident_file = (
+        INCIDENT_DIR
+        / f"{incident['incident_id']}.json"
+    )
+
+    incident_file.write_text(
+        json.dumps(
+            incident,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+
+    return incident_file
+
+
+def load_kubernetes_client() -> tuple[
+    client.CoreV1Api,
+    client.AppsV1Api,
+]:
     """
     Load Kubernetes configuration.
 
@@ -43,6 +91,7 @@ def load_kubernetes_client() -> tuple[client.CoreV1Api, client.AppsV1Api]:
     During local development:
       fall back to kubeconfig.
     """
+
     try:
         config.load_incluster_config()
     except config.ConfigException:
@@ -54,11 +103,9 @@ def load_kubernetes_client() -> tuple[client.CoreV1Api, client.AppsV1Api]:
     )
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def extract_alert_context(payload: dict[str, Any]) -> dict[str, Any]:
+def extract_alert_context(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     """
     Extract useful information from the Azure Monitor
     Common Alert Schema.
@@ -67,36 +114,84 @@ def extract_alert_context(payload: dict[str, Any]) -> dict[str, Any]:
     fallback for non-common payloads.
     """
 
-    data = payload.get("data", {})
+    data = payload.get(
+        "data",
+        {},
+    )
 
-    essentials = data.get("essentials", {})
-    alert_context = data.get("alertContext", {})
+    essentials = data.get(
+        "essentials",
+        {},
+    )
+
+    alert_context = data.get(
+        "alertContext",
+        {},
+    )
 
     return {
-        "alert_id": essentials.get("alertId"),
-        "alert_rule": essentials.get("alertRule"),
-        "severity": essentials.get("severity"),
-        "monitor_condition": essentials.get("monitorCondition"),
-        "signal_type": essentials.get("signalType"),
-        "fired_date_time": essentials.get("firedDateTime"),
-        "resolved_date_time": essentials.get("resolvedDateTime"),
-        "affected_resource": essentials.get("alertTargetIDs"),
-        "description": essentials.get("description"),
-        "monitor_service": essentials.get("monitorService"),
-        "expression": alert_context.get("expression"),
-        "expression_value": alert_context.get("expressionValue"),
-        "alert_for": alert_context.get("for"),
-        "labels": alert_context.get("labels", {}),
-        "annotations": alert_context.get("annotations", {}),
-        "rule_group": alert_context.get("ruleGroup"),
+        "alert_id": essentials.get(
+            "alertId"
+        ),
+        "alert_rule": essentials.get(
+            "alertRule"
+        ),
+        "severity": essentials.get(
+            "severity"
+        ),
+        "monitor_condition": essentials.get(
+            "monitorCondition"
+        ),
+        "signal_type": essentials.get(
+            "signalType"
+        ),
+        "fired_date_time": essentials.get(
+            "firedDateTime"
+        ),
+        "resolved_date_time": essentials.get(
+            "resolvedDateTime"
+        ),
+        "affected_resource": essentials.get(
+            "alertTargetIDs"
+        ),
+        "description": essentials.get(
+            "description"
+        ),
+        "monitor_service": essentials.get(
+            "monitorService"
+        ),
+        "expression": alert_context.get(
+            "expression"
+        ),
+        "expression_value": alert_context.get(
+            "expressionValue"
+        ),
+        "alert_for": alert_context.get(
+            "for"
+        ),
+        "labels": alert_context.get(
+            "labels",
+            {},
+        ),
+        "annotations": alert_context.get(
+            "annotations",
+            {},
+        ),
+        "rule_group": alert_context.get(
+            "ruleGroup"
+        ),
     }
 
 
 def collect_pods(
     core_api: client.CoreV1Api,
 ) -> list[dict[str, Any]]:
+    """
+    Collect pod state from the incident namespace.
+    """
+
     pods = core_api.list_namespaced_pod(
-        namespace=INCIDENT_NAMESPACE
+        namespace=INCIDENT_NAMESPACE,
     )
 
     result: list[dict[str, Any]] = []
@@ -117,14 +212,19 @@ def collect_pods(
                     {
                         "name": status.name,
                         "ready": status.ready,
-                        "restart_count": status.restart_count,
+                        "restart_count": (
+                            status.restart_count
+                        ),
                         "state": (
                             status.state.to_dict()
                             if status.state
                             else None
                         ),
                     }
-                    for status in (pod.status.container_statuses or [])
+                    for status in (
+                        pod.status.container_statuses
+                        or []
+                    )
                 ],
             }
         )
@@ -135,8 +235,12 @@ def collect_pods(
 def collect_events(
     core_api: client.CoreV1Api,
 ) -> list[dict[str, Any]]:
+    """
+    Collect Kubernetes events from the incident namespace.
+    """
+
     events = core_api.list_namespaced_event(
-        namespace=INCIDENT_NAMESPACE
+        namespace=INCIDENT_NAMESPACE,
     )
 
     result: list[dict[str, Any]] = []
@@ -181,6 +285,10 @@ def collect_logs(
     core_api: client.CoreV1Api,
     pods: list[dict[str, Any]],
 ) -> dict[str, str]:
+    """
+    Collect the last 50 lines of logs from each pod.
+    """
+
     logs: dict[str, str] = {}
 
     for pod in pods:
@@ -197,9 +305,10 @@ def collect_logs(
 
         except ApiException as exc:
             logs[pod_name] = (
-                f"Unable to collect logs: "
+                "Unable to collect logs: "
                 f"HTTP {exc.status}: {exc.reason}"
             )
+
         except Exception as exc:
             logs[pod_name] = (
                 f"Unable to collect logs: {exc}"
@@ -209,11 +318,24 @@ def collect_logs(
 
 
 def collect_evidence() -> dict[str, Any]:
+    """
+    Collect Kubernetes evidence for the incident.
+    """
+
     core_api, _ = load_kubernetes_client()
 
-    pods = collect_pods(core_api)
-    events = collect_events(core_api)
-    logs = collect_logs(core_api, pods)
+    pods = collect_pods(
+        core_api
+    )
+
+    events = collect_events(
+        core_api
+    )
+
+    logs = collect_logs(
+        core_api,
+        pods,
+    )
 
     return {
         "namespace": INCIDENT_NAMESPACE,
@@ -222,6 +344,7 @@ def collect_evidence() -> dict[str, Any]:
         "events": events,
         "logs": logs,
     }
+
 
 def analyse_incident(
     incident: dict[str, Any],
@@ -236,8 +359,14 @@ def analyse_incident(
 
     payload = {
         "incident_id": incident["incident_id"],
-        "alert": incident.get("alert", {}),
-        "evidence": incident.get("evidence", {}),
+        "alert": incident.get(
+            "alert",
+            {},
+        ),
+        "evidence": incident.get(
+            "evidence",
+            {},
+        ),
     }
 
     try:
@@ -257,22 +386,26 @@ def analyse_incident(
             request,
             timeout=60,
         ) as response:
-            response_body = response.read().decode(
-                "utf-8"
+            response_body = (
+                response.read().decode("utf-8")
             )
 
-        return json.loads(response_body)
+        return json.loads(
+            response_body
+        )
 
     except urllib.error.HTTPError as exc:
-        response_body = exc.read().decode(
-            "utf-8",
-            errors="replace",
+        response_body = (
+            exc.read().decode(
+                "utf-8",
+                errors="replace",
+            )
         )
 
         return {
             "status": "failed",
             "error": (
-                f"AI Analyser returned HTTP "
+                "AI Analyser returned HTTP "
                 f"{exc.code}: {response_body}"
             ),
         }
@@ -285,24 +418,36 @@ def analyse_incident(
             ),
         }
 
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
-    return {"status": "healthy"}
+    """
+    Collector health endpoint.
+    """
+
+    return {
+        "status": "healthy"
+    }
 
 
 @app.post("/alerts")
 async def receive_alert(
     request: Request,
-    token: str | None = Query(default=None),
+    token: str | None = Query(
+        default=None
+    ),
 ) -> dict[str, Any]:
     """
     Receive Azure Monitor Action Group webhook payload.
     """
 
     if WEBHOOK_TOKEN:
-        if not token or not hmac.compare_digest(
-            token,
-            WEBHOOK_TOKEN,
+        if (
+            not token
+            or not hmac.compare_digest(
+                token,
+                WEBHOOK_TOKEN,
+            )
         ):
             raise HTTPException(
                 status_code=401,
@@ -311,18 +456,24 @@ async def receive_alert(
 
     try:
         payload = await request.json()
+
     except Exception as exc:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid JSON payload: {exc}",
         ) from exc
 
-    incident_id = str(uuid.uuid4())
+    incident_id = str(
+        uuid.uuid4()
+    )
 
-    alert = extract_alert_context(payload)
+    alert = extract_alert_context(
+        payload
+    )
 
     try:
         evidence = collect_evidence()
+
     except Exception as exc:
         evidence = {
             "collection_error": str(exc),
@@ -332,39 +483,60 @@ async def receive_alert(
     incident = {
         "incident_id": incident_id,
         "received_at": utc_now(),
+        "status": "Open",
         "alert": alert,
         "evidence": evidence,
+        "approval": {
+            "status": "Pending",
+            "approved_by": None,
+            "approved_at": None,
+        },
+        "remediation": {
+            "status": "NotStarted",
+        },
     }
 
-    ai_analysis = analyse_incident(incident)
+    ai_analysis = analyse_incident(
+        incident
+    )
 
-    incident["ai_analysis"] = ai_analysis
+    incident["ai_analysis"] = (
+        ai_analysis
+    )
 
-    incident_file = INCIDENT_DIR / f"{incident_id}.json"
+    if ai_analysis.get("status") == "failed":
+        incident["status"] = (
+            "AnalysisFailed"
+        )
 
-    incident_file.write_text(
-        json.dumps(
-            incident,
-            indent=2,
-            default=str,
-        ),
-        encoding="utf-8",
+    else:
+        incident["status"] = (
+            "ApprovalPending"
+        )
+
+    incident_file = save_incident(
+        incident
     )
 
     return {
         "status": "accepted",
         "incident_id": incident_id,
-        "alert_rule": alert.get("alert_rule"),
+        "alert_rule": alert.get(
+            "alert_rule"
+        ),
         "monitor_condition": alert.get(
             "monitor_condition"
         ),
-        "incident_file": str(incident_file),
+        "incident_file": str(
+            incident_file
+        ),
         "ai_analysis_status": (
-        "completed"
-        if ai_analysis.get("status") != "failed"
-        else "failed"
-    ),
-    "ai_analysis": ai_analysis,
+            "completed"
+            if ai_analysis.get("status")
+            != "failed"
+            else "failed"
+        ),
+        "ai_analysis": ai_analysis,
     }
 
 
@@ -372,9 +544,13 @@ async def receive_alert(
 def get_incident(
     incident_id: str,
 ) -> dict[str, Any]:
+    """
+    Return a stored incident.
+    """
 
     incident_file = (
-        INCIDENT_DIR / f"{incident_id}.json"
+        INCIDENT_DIR
+        / f"{incident_id}.json"
     )
 
     if not incident_file.exists():
@@ -388,3 +564,90 @@ def get_incident(
             encoding="utf-8"
         )
     )
+
+
+@app.post("/incidents/{incident_id}/approve")
+async def approve_incident(
+    incident_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """
+    Approve an incident for future remediation.
+
+    This endpoint only records approval.
+    It does not execute any remediation.
+    """
+
+    incident_file = (
+        INCIDENT_DIR
+        / f"{incident_id}.json"
+    )
+
+    if not incident_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    try:
+        payload = await request.json()
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON payload: {exc}",
+        ) from exc
+
+    approved_by = payload.get(
+        "approved_by"
+    )
+
+    if not approved_by:
+        raise HTTPException(
+            status_code=400,
+            detail="approved_by is required",
+        )
+
+    incident = json.loads(
+        incident_file.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    current_status = incident.get(
+        "status",
+        "Open",
+    )
+
+    if current_status not in {
+        "ApprovalPending",
+        "AnalysisFailed",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Incident cannot be approved "
+                f"from status '{current_status}'"
+            ),
+        )
+
+    approved_at = utc_now()
+
+    incident["status"] = "Approved"
+
+    incident["approval"] = {
+        "status": "Approved",
+        "approved_by": approved_by,
+        "approved_at": approved_at,
+    }
+
+    save_incident(
+        incident
+    )
+
+    return {
+        "status": "approved",
+        "incident_id": incident_id,
+        "approved_by": approved_by,
+        "approved_at": approved_at,
+    }
