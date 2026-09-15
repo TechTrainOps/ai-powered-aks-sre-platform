@@ -15,13 +15,6 @@ collectorImage:
   tag: "1.0.0"
   pullPolicy: IfNotPresent
 
-azure:
-  openaiEndpoint: ""
-  openaiDeployment: ""
-  logWorkspaceId: ""
-  analyserClientId: ""
-  collectorClientId: "c2396590-6e09-499b-a990-573d01c8a05f"
-
 analyser:
   enabled: true
 
@@ -50,7 +43,7 @@ azure:
   openaiDeployment: ""
   logWorkspaceId: ""
   analyserClientId: ""
-  collectorClientId: ""
+  collectorClientId: "c2396590-6e09-499b-a990-573d01c8a05f"
 
 resources:
   requests:
