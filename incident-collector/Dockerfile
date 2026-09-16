@@ -13,6 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
+COPY runbooks ./runbooks
 
 RUN mkdir -p /tmp/incidents \
     && chown -R 10001:10001 /app /tmp/incidents
