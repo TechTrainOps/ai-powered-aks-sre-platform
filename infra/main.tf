@@ -244,7 +244,7 @@ resource "azurerm_storage_account" "incident_storage" {
 
   allow_nested_items_to_be_public = false
 
-  public_network_access_enabled = true
+  public_network_access_enabled = false
 
   blob_properties {
     versioning_enabled = true
