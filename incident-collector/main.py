@@ -14,6 +14,7 @@ from azure.storage.blob import BlobServiceClient
 from fastapi import FastAPI, HTTPException, Query, Request
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+from runbooks import get_runbook, list_runbooks
 
 
 app = FastAPI(
@@ -522,69 +523,6 @@ def analyse_incident(
         }
 
 
-def restart_sre_api() -> dict[str, Any]:
-    """
-    Restart the sre-api deployment.
-
-    This is the remediation runbook for the demo.
-    """
-
-    _, apps_api = load_kubernetes_client()
-
-    deployment_name = "sre-api"
-
-    try:
-        deployment = (
-            apps_api.read_namespaced_deployment(
-                name=deployment_name,
-                namespace=INCIDENT_NAMESPACE,
-            )
-        )
-
-        existing_annotations = (
-            deployment.spec.template.metadata.annotations
-            if deployment.spec.template.metadata
-            and deployment.spec.template.metadata.annotations
-            else {}
-        )
-
-        annotations = dict(
-            existing_annotations
-        )
-
-        annotations[
-            "sre.azure.com/remediation-restarted-at"
-        ] = utc_now()
-
-        apps_api.patch_namespaced_deployment(
-            name=deployment_name,
-            namespace=INCIDENT_NAMESPACE,
-            body={
-                "spec": {
-                    "template": {
-                        "metadata": {
-                            "annotations": annotations
-                        }
-                    }
-                }
-            },
-        )
-
-        return {
-            "status": "started",
-            "deployment": deployment_name,
-        }
-
-    except ApiException as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Unable to restart sre-api deployment: "
-                f"HTTP {exc.status}: {exc.reason}"
-            ),
-        ) from exc
-
-
 def wait_for_sre_api_rollout(
     timeout_seconds: int = 120,
     poll_interval_seconds: int = 5,
@@ -767,6 +705,17 @@ def verify_sre_api() -> dict[str, Any]:
     }
 
 
+@app.get("/runbooks")
+def get_runbooks() -> dict[str, Any]:
+    """
+    Return the registered remediation runbooks.
+    """
+
+    return {
+        "runbooks": list_runbooks()
+    }
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     """
@@ -917,8 +866,10 @@ async def approve_incident(
     """
     Approve an incident for future remediation.
 
-    This endpoint only records approval.
-    It does not execute any remediation.
+    Existing behavior is preserved:
+      - approved_by is still required.
+      - If runbook is not supplied, restart-sre-api is used.
+      - Approval does not execute remediation.
     """
 
     incident, _ = load_incident(
@@ -927,7 +878,6 @@ async def approve_incident(
 
     try:
         payload = await request.json()
-
     except Exception as exc:
         raise HTTPException(
             status_code=400,
@@ -961,6 +911,52 @@ async def approve_incident(
             ),
         )
 
+    # Existing approval payloads that do not specify a
+    # runbook continue to use the current restart behavior.
+    runbook_name = payload.get(
+        "runbook",
+        "restart-sre-api",
+    )
+
+    parameters = payload.get(
+        "parameters",
+        {},
+    )
+
+    if not isinstance(
+        parameters,
+        dict,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="parameters must be an object",
+        )
+
+    core_api, apps_api = (
+        load_kubernetes_client()
+    )
+
+    try:
+        runbook = get_runbook(
+            name=runbook_name,
+            core_api=core_api,
+            apps_api=apps_api,
+            namespace=INCIDENT_NAMESPACE,
+            utc_now=utc_now,
+            wait_for_rollout=wait_for_sre_api_rollout,
+            verify_sre_api=verify_sre_api,
+        )
+
+        runbook.validate_parameters(
+            parameters
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
     approved_at = utc_now()
 
     incident["status"] = "Approved"
@@ -969,6 +965,20 @@ async def approve_incident(
         "status": "Approved",
         "approved_by": approved_by,
         "approved_at": approved_at,
+        "runbook": runbook_name,
+        "parameters": parameters,
+    }
+
+    # Keep the remediation structure compatible with
+    # the existing incident schema while recording the
+    # selected runbook and parameters.
+    incident["remediation"] = {
+        "status": "NotStarted",
+        "runbook": runbook_name,
+        "parameters": parameters,
+        "started_at": None,
+        "completed_at": None,
+        "result": None,
     }
 
     save_incident(
@@ -980,6 +990,8 @@ async def approve_incident(
         "incident_id": incident_id,
         "approved_by": approved_by,
         "approved_at": approved_at,
+        "runbook": runbook_name,
+        "parameters": parameters,
     }
 
 
@@ -990,10 +1002,11 @@ def remediate_incident(
     incident_id: str,
 ) -> dict[str, Any]:
     """
-    Execute the approved remediation runbook.
+    Execute the runbook that was explicitly recorded
+    in the incident approval.
 
-    Remediation is allowed only when the incident
-    has been explicitly approved.
+    The endpoint does not accept a runbook from the caller.
+    The approved runbook is the only runbook that can execute.
     """
 
     incident, _ = load_incident(
@@ -1028,86 +1041,97 @@ def remediate_incident(
             detail="Remediation already completed",
         )
 
+    approval = incident.get(
+        "approval",
+        {},
+    )
+
+    # New incidents store the runbook in approval.
+    # These fallbacks preserve compatibility with
+    # older incidents created before runbook selection
+    # was added.
+    runbook_name = approval.get(
+        "runbook"
+    ) or remediation.get(
+        "runbook"
+    ) or "restart-sre-api"
+
+    parameters = approval.get(
+        "parameters"
+    )
+
+    if parameters is None:
+        parameters = remediation.get(
+            "parameters",
+            {},
+        )
+
+    if not isinstance(
+        parameters,
+        dict,
+    ):
+        parameters = {}
+
+    core_api, apps_api = (
+        load_kubernetes_client()
+    )
+
+    try:
+        runbook = get_runbook(
+            name=runbook_name,
+            core_api=core_api,
+            apps_api=apps_api,
+            namespace=INCIDENT_NAMESPACE,
+            utc_now=utc_now,
+            wait_for_rollout=wait_for_sre_api_rollout,
+            verify_sre_api=verify_sre_api,
+        )
+
+        # Validate again immediately before execution.
+        runbook.validate_parameters(
+            parameters
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
     started_at = utc_now()
 
     remediation["status"] = "Running"
-    remediation["runbook"] = (
-        "restart-sre-api"
-    )
+    remediation["runbook"] = runbook_name
+    remediation["parameters"] = parameters
     remediation["started_at"] = started_at
     remediation["completed_at"] = None
     remediation["result"] = None
 
-    incident["remediation"] = (
-        remediation
-    )
+    incident["remediation"] = remediation
 
     save_incident(
         incident
     )
 
     try:
-        restart_result = restart_sre_api()
-
-        rollout_result = (
-            wait_for_sre_api_rollout()
+        result = runbook.execute(
+            parameters
         )
 
-        if not rollout_result.get(
+        if result.get(
             "success"
         ):
-            incident["status"] = (
-                "RemediationFailed"
-            )
-
-            incident["remediation"] = {
-                "status": "Failed",
-                "runbook": "restart-sre-api",
-                "started_at": started_at,
-                "completed_at": utc_now(),
-                "result": {
-                    "restart": restart_result,
-                    "rollout": rollout_result,
-                    "verification": None,
-                },
-            }
-
-            save_incident(
-                incident
-            )
-
-            return {
-                "incident_id": incident_id,
-                "status": incident["status"],
-                "remediation": incident[
-                    "remediation"
-                ],
-            }
-
-        verification = verify_sre_api()
-
-        if not verification["success"]:
-            time.sleep(5)
-
-            verification = (
-                verify_sre_api()
-            )
-
-        if verification["success"]:
             incident["status"] = (
                 "Remediated"
             )
 
             incident["remediation"] = {
                 "status": "Succeeded",
-                "runbook": "restart-sre-api",
+                "runbook": runbook_name,
+                "parameters": parameters,
                 "started_at": started_at,
                 "completed_at": utc_now(),
-                "result": {
-                    "restart": restart_result,
-                    "rollout": rollout_result,
-                    "verification": verification,
-                },
+                "result": result,
             }
 
         else:
@@ -1117,30 +1141,12 @@ def remediate_incident(
 
             incident["remediation"] = {
                 "status": "Failed",
-                "runbook": "restart-sre-api",
+                "runbook": runbook_name,
+                "parameters": parameters,
                 "started_at": started_at,
                 "completed_at": utc_now(),
-                "result": {
-                    "restart": restart_result,
-                    "rollout": rollout_result,
-                    "verification": verification,
-                },
+                "result": result,
             }
-
-    except HTTPException as exc:
-        incident["status"] = (
-            "RemediationFailed"
-        )
-
-        incident["remediation"] = {
-            "status": "Failed",
-            "runbook": "restart-sre-api",
-            "started_at": started_at,
-            "completed_at": utc_now(),
-            "result": {
-                "error": exc.detail,
-            },
-        }
 
     except Exception as exc:
         incident["status"] = (
@@ -1149,10 +1155,12 @@ def remediate_incident(
 
         incident["remediation"] = {
             "status": "Failed",
-            "runbook": "restart-sre-api",
+            "runbook": runbook_name,
+            "parameters": parameters,
             "started_at": started_at,
             "completed_at": utc_now(),
             "result": {
+                "success": False,
                 "error": str(exc),
             },
         }
