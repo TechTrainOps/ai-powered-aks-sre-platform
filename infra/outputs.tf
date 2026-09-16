@@ -33,3 +33,11 @@ output "incident_storage_container_name" {
 output "incident_storage_account_endpoint" {
   value = azurerm_storage_account.incident_storage.primary_blob_endpoint
 }
+
+output "incident_storage_private_endpoint_ip" {
+  value = azurerm_private_endpoint.incident_storage_blob.private_service_connection[0].private_ip_address
+}
+
+output "incident_storage_private_dns_zone" {
+  value = azurerm_private_dns_zone.blob.name
+}
