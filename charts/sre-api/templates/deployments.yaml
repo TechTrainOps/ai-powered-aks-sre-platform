@@ -68,7 +68,6 @@ spec:
     metadata:
       labels:
         app: incident-collector
-      annotations:
         azure.workload.identity/use: "true"
     spec:
       serviceAccountName: incident-collector
