@@ -225,7 +225,7 @@ resource "azurerm_cognitive_deployment" "openai_model" {
 
   sku {
     name     = "GlobalStandard"
-    capacity = 1
+    capacity = 4000
   }
 
   version_upgrade_option = "NoAutoUpgrade"
