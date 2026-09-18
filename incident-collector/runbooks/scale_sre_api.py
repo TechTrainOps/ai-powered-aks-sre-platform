@@ -17,7 +17,8 @@ class ScaleSreApiRunbook(Runbook):
     name = "scale-sre-api"
 
     description = (
-        "Scale sre-api between 1 and 5 replicas "
+        "Scale sre-api between 1 and 5 replicas, "
+        "verify the requested replica count, "
         "and verify application health."
     )
 
@@ -119,21 +120,58 @@ class ScaleSreApiRunbook(Runbook):
 
             rollout = self.wait_for_rollout()
 
+            final_deployment = (
+                self.apps_api
+                .read_namespaced_deployment(
+                    name=deployment_name,
+                    namespace=self.namespace,
+                )
+            )
+
+            actual_replicas = (
+                final_deployment.spec.replicas or 0
+            )
+
+            verification = self.verify_sre_api()
+
+            execution = {
+                "status": "started",
+                "previous_replicas": current_replicas,
+                "requested_replicas": replicas,
+                "observed_replicas": actual_replicas,
+            }
+
+            if actual_replicas != replicas:
+                return {
+                    "success": False,
+                    "runbook": self.name,
+                    "deployment": deployment_name,
+                    "execution": execution,
+                    "reconciliation": {
+                        "status": "ReplicaCountMismatch",
+                        "requested_replicas": replicas,
+                        "observed_replicas": actual_replicas,
+                        "message": (
+                            "The requested replica count was "
+                            "not maintained by the Deployment. "
+                            "Another Kubernetes controller may "
+                            "have reconciled the replica count."
+                        ),
+                    },
+                    "rollout": rollout,
+                    "verification": verification,
+                }
+
             if not rollout.get("success"):
                 return {
                     "success": False,
                     "runbook": self.name,
                     "deployment": deployment_name,
-                    "execution": {
-                        "status": "started",
-                        "previous_replicas": current_replicas,
-                        "requested_replicas": replicas,
-                    },
+                    "execution": execution,
+                    "reconciliation": None,
                     "rollout": rollout,
-                    "verification": None,
+                    "verification": verification,
                 }
-
-            verification = self.verify_sre_api()
 
             return {
                 "success": verification.get(
@@ -142,11 +180,8 @@ class ScaleSreApiRunbook(Runbook):
                 ),
                 "runbook": self.name,
                 "deployment": deployment_name,
-                "execution": {
-                    "status": "started",
-                    "previous_replicas": current_replicas,
-                    "requested_replicas": replicas,
-                },
+                "execution": execution,
+                "reconciliation": None,
                 "rollout": rollout,
                 "verification": verification,
             }
