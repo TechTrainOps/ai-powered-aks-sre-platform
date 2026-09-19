@@ -164,11 +164,8 @@ class RollbackSreApiRunbook(Runbook):
                     .image
                 )
 
-            target_template = (
-                previous_replica_set
-                .spec
-                .template
-                .to_dict()
+            target_template = ApiClient().sanitize_for_serialization(
+                previous_replica_set.spec.template
             )
 
             target_labels = (
