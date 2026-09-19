@@ -9,11 +9,15 @@ from .base import Runbook
 
 
 DEPLOYMENT_NAME = "sre-api"
+
 MIN_REPLICAS = 1
 MAX_REPLICAS = 5
 
-RECONCILIATION_TIMEOUT_SECONDS = 30
-RECONCILIATION_POLL_SECONDS = 3
+REPLICA_RECONCILIATION_TIMEOUT_SECONDS = 30
+REPLICA_RECONCILIATION_POLL_SECONDS = 3
+
+REPLICA_AVAILABILITY_TIMEOUT_SECONDS = 120
+REPLICA_AVAILABILITY_POLL_SECONDS = 3
 
 
 class ScaleSreApiRunbook(Runbook):
@@ -23,6 +27,7 @@ class ScaleSreApiRunbook(Runbook):
     description = (
         "Scale sre-api between 1 and 5 replicas, "
         "verify the requested replica count, "
+        "verify replica availability, "
         "and verify application health."
     )
 
@@ -124,13 +129,13 @@ class ScaleSreApiRunbook(Runbook):
 
             actual_replicas = current_replicas
 
-            deadline = (
+            reconciliation_deadline = (
                 time.time()
-                + RECONCILIATION_TIMEOUT_SECONDS
+                + REPLICA_RECONCILIATION_TIMEOUT_SECONDS
             )
 
-            while time.time() < deadline:
-                final_deployment = (
+            while time.time() < reconciliation_deadline:
+                deployment = (
                     self.apps_api
                     .read_namespaced_deployment(
                         name=deployment_name,
@@ -139,14 +144,14 @@ class ScaleSreApiRunbook(Runbook):
                 )
 
                 actual_replicas = (
-                    final_deployment.spec.replicas or 0
+                    deployment.spec.replicas or 0
                 )
 
                 if actual_replicas == replicas:
                     break
 
                 time.sleep(
-                    RECONCILIATION_POLL_SECONDS
+                    REPLICA_RECONCILIATION_POLL_SECONDS
                 )
 
             execution = {
@@ -177,9 +182,90 @@ class ScaleSreApiRunbook(Runbook):
                     "verification": None,
                 }
 
-            rollout = self.wait_for_rollout()
+            availability_deadline = (
+                time.time()
+                + REPLICA_AVAILABILITY_TIMEOUT_SECONDS
+            )
 
-            if not rollout.get("success"):
+            available_replicas = 0
+            unavailable_replicas = 0
+
+            while time.time() < availability_deadline:
+                deployment = (
+                    self.apps_api
+                    .read_namespaced_deployment(
+                        name=deployment_name,
+                        namespace=self.namespace,
+                    )
+                )
+
+                actual_replicas = (
+                    deployment.spec.replicas or 0
+                )
+
+                available_replicas = (
+                    deployment.status.available_replicas
+                    or 0
+                )
+
+                unavailable_replicas = (
+                    deployment.status.unavailable_replicas
+                    or 0
+                )
+
+                if actual_replicas != replicas:
+                    execution[
+                        "observed_replicas"
+                    ] = actual_replicas
+
+                    return {
+                        "success": False,
+                        "runbook": self.name,
+                        "deployment": deployment_name,
+                        "execution": execution,
+                        "reconciliation": {
+                            "status": "ReplicaCountMismatch",
+                            "requested_replicas": replicas,
+                            "observed_replicas": actual_replicas,
+                            "message": (
+                                "The requested replica count was "
+                                "not maintained by the Deployment. "
+                                "Another Kubernetes controller "
+                                "may have reconciled the replica "
+                                "count."
+                            ),
+                        },
+                        "rollout": None,
+                        "verification": None,
+                    }
+
+                if (
+                    available_replicas >= replicas
+                    and unavailable_replicas == 0
+                ):
+                    break
+
+                time.sleep(
+                    REPLICA_AVAILABILITY_POLL_SECONDS
+                )
+
+            rollout = {
+                "success": (
+                    actual_replicas == replicas
+                    and available_replicas >= replicas
+                    and unavailable_replicas == 0
+                ),
+                "requested_replicas": replicas,
+                "observed_replicas": actual_replicas,
+                "available_replicas": available_replicas,
+                "unavailable_replicas": unavailable_replicas,
+            }
+
+            execution[
+                "observed_replicas"
+            ] = actual_replicas
+
+            if not rollout["success"]:
                 return {
                     "success": False,
                     "runbook": self.name,
