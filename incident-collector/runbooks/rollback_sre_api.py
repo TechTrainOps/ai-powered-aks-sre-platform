@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import copy
 from typing import Any
 
+from kubernetes.client import ApiClient
 from kubernetes.client.exceptions import ApiException
 
 from .base import Runbook
@@ -16,8 +16,8 @@ class RollbackSreApiRunbook(Runbook):
     name = "rollback-sre-api"
 
     description = (
-        "Rollback sre-api to the immediately "
-        "previous Deployment revision."
+        "Rollback sre-api to the immediately previous "
+        "Deployment revision and verify application health."
     )
 
     risk = "high"
@@ -27,82 +27,17 @@ class RollbackSreApiRunbook(Runbook):
         parameters: dict[str, Any],
     ) -> None:
 
-        allowed = {
-            "deployment",
-        }
-
-        unknown = set(parameters) - allowed
-
-        if unknown:
+        if parameters:
             raise ValueError(
-                "Unsupported parameters: "
-                f"{sorted(unknown)}"
+                "rollback-sre-api does not accept parameters."
             )
-
-        deployment = parameters.get(
-            "deployment",
-            DEPLOYMENT_NAME,
-        )
-
-        if deployment != DEPLOYMENT_NAME:
-            raise ValueError(
-                "Only sre-api is allowed for "
-                "this runbook."
-            )
-
-    @staticmethod
-    def _revision(
-        replica_set: Any,
-    ) -> int:
-
-        annotations = (
-            replica_set.metadata.annotations
-            or {}
-        )
-
-        value = annotations.get(
-            "deployment.kubernetes.io/revision"
-        )
-
-        try:
-            return int(value)
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return 0
-
-    @staticmethod
-    def _deployment_revision(
-        deployment: Any,
-    ) -> int:
-
-        annotations = (
-            deployment.metadata.annotations
-            or {}
-        )
-
-        value = annotations.get(
-            "deployment.kubernetes.io/revision"
-        )
-
-        try:
-            return int(value)
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return 0
 
     def execute(
         self,
         parameters: dict[str, Any],
     ) -> dict[str, Any]:
 
-        deployment_name = parameters.get(
-            "deployment",
-            DEPLOYMENT_NAME,
-        )
+        deployment_name = DEPLOYMENT_NAME
 
         try:
             deployment = (
@@ -113,137 +48,184 @@ class RollbackSreApiRunbook(Runbook):
                 )
             )
 
-            current_revision = (
-                self._deployment_revision(
-                    deployment
-                )
+            current_revision_value = (
+                deployment.metadata.annotations or {}
+            ).get(
+                "deployment.kubernetes.io/revision"
             )
+
+            if not current_revision_value:
+                return {
+                    "success": False,
+                    "runbook": self.name,
+                    "deployment": deployment_name,
+                    "error": (
+                        "Current Deployment revision could "
+                        "not be determined."
+                    ),
+                }
+
+            try:
+                current_revision = int(
+                    current_revision_value
+                )
+            except ValueError:
+                return {
+                    "success": False,
+                    "runbook": self.name,
+                    "deployment": deployment_name,
+                    "error": (
+                        "Current Deployment revision is "
+                        f"invalid: {current_revision_value}"
+                    ),
+                }
 
             replica_sets = (
                 self.apps_api
                 .list_namespaced_replica_set(
                     namespace=self.namespace,
+                    label_selector=(
+                        "app=sre-api"
+                    ),
                 )
             )
 
-            owned_replica_sets = []
+            candidate_revisions = []
 
-            deployment_uid = (
-                deployment.metadata.uid
-            )
+            for replica_set in replica_sets.items:
 
-            for replica_set in (
-                replica_sets.items
-            ):
-
-                owners = (
+                owner_references = (
                     replica_set.metadata.owner_references
                     or []
                 )
 
-                owned = any(
+                controlled_by_current_deployment = any(
                     owner.kind == "Deployment"
-                    and owner.name
-                    == deployment_name
-                    and owner.uid
-                    == deployment_uid
-                    for owner in owners
+                    and owner.name == deployment_name
+                    for owner in owner_references
                 )
 
-                if owned:
-                    owned_replica_sets.append(
-                        replica_set
+                if not controlled_by_current_deployment:
+                    continue
+
+                annotations = (
+                    replica_set.metadata.annotations or {}
+                )
+
+                revision_value = annotations.get(
+                    "deployment.kubernetes.io/revision"
+                )
+
+                if not revision_value:
+                    continue
+
+                try:
+                    revision = int(revision_value)
+                except ValueError:
+                    continue
+
+                if revision < current_revision:
+                    candidate_revisions.append(
+                        (
+                            revision,
+                            replica_set,
+                        )
                     )
 
-            candidates = [
-                rs
-                for rs in owned_replica_sets
-                if self._revision(rs)
-                < current_revision
-            ]
-
-            candidates.sort(
-                key=self._revision,
-                reverse=True,
-            )
-
-            if not candidates:
+            if not candidate_revisions:
                 return {
                     "success": False,
                     "runbook": self.name,
                     "deployment": deployment_name,
                     "error": (
-                        "No previous ReplicaSet revision "
-                        "was found for rollback."
+                        "No previous Deployment revision "
+                        "was found."
                     ),
                 }
 
-            previous = candidates[0]
-
-            previous_revision = self._revision(
-                previous
+            target_revision, previous_replica_set = max(
+                candidate_revisions,
+                key=lambda item: item[0],
             )
+
+            current_image = None
 
             if (
-                previous.spec is None
-                or previous.spec.template is None
+                deployment.spec.template
+                and deployment.spec.template.spec
+                and deployment.spec.template.spec.containers
             ):
-                return {
-                    "success": False,
-                    "runbook": self.name,
-                    "deployment": deployment_name,
-                    "error": (
-                        "Previous ReplicaSet does not "
-                        "contain a valid pod template."
-                    ),
-                }
-
-            template = copy.deepcopy(
-                previous.spec.template
-            )
-
-            template_dict = template.to_dict()
-
-            metadata = template_dict.setdefault(
-                "metadata",
-                {},
-            )
-
-            labels = dict(
-                metadata.get(
-                    "labels",
-                    {},
+                current_image = (
+                    deployment
+                    .spec
+                    .template
+                    .spec
+                    .containers[0]
+                    .image
                 )
-                or {}
+
+            target_template = (
+                previous_replica_set
+                .spec
+                .template
+                .to_dict()
             )
 
-            annotations = dict(
-                metadata.get(
-                    "annotations",
-                    {},
-                )
-                or {}
+            target_labels = (
+                target_template
+                .get("metadata", {})
+                .get("labels", {})
             )
 
-            labels.pop(
+            target_labels.pop(
                 "pod-template-hash",
                 None,
             )
 
-            annotations.pop(
-                "deployment.kubernetes.io/revision",
-                None,
+            target_annotations = (
+                target_template
+                .get("metadata", {})
+                .get("annotations", {})
             )
 
-            metadata["labels"] = labels
-            metadata["annotations"] = annotations
+            target_template["metadata"][
+                "labels"
+            ] = target_labels
+
+            target_template["metadata"][
+                "annotations"
+            ] = target_annotations
+
+            target_image = None
+
+            target_containers = (
+                target_template
+                .get("spec", {})
+                .get("containers", [])
+            )
+
+            if target_containers:
+                target_image = target_containers[0].get(
+                    "image"
+                )
+
+            execution = {
+                "status": "started",
+                "current_revision": current_revision,
+                "target_revision": target_revision,
+                "current_image": current_image,
+                "target_image": target_image,
+                "target_replica_set": (
+                    previous_replica_set.metadata.name
+                ),
+            }
 
             self.apps_api.patch_namespaced_deployment(
                 name=deployment_name,
                 namespace=self.namespace,
                 body={
                     "spec": {
-                        "template": template_dict,
+                        "template": target_template,
                     }
                 },
             )
@@ -255,20 +237,73 @@ class RollbackSreApiRunbook(Runbook):
                     "success": False,
                     "runbook": self.name,
                     "deployment": deployment_name,
-                    "execution": {
-                        "status": "started",
-                        "current_revision": (
-                            current_revision
-                        ),
-                        "target_revision": (
-                            previous_revision
-                        ),
-                        "target_replica_set": (
-                            previous.metadata.name
-                        ),
-                    },
+                    "execution": execution,
                     "rollout": rollout,
                     "verification": None,
+                }
+
+            final_deployment = (
+                self.apps_api
+                .read_namespaced_deployment(
+                    name=deployment_name,
+                    namespace=self.namespace,
+                )
+            )
+
+            final_revision = (
+                (
+                    final_deployment
+                    .metadata
+                    .annotations
+                    or {}
+                ).get(
+                    "deployment.kubernetes.io/revision"
+                )
+            )
+
+            final_image = None
+
+            if (
+                final_deployment.spec.template
+                and final_deployment.spec.template.spec
+                and final_deployment.spec.template.spec.containers
+            ):
+                final_image = (
+                    final_deployment
+                    .spec
+                    .template
+                    .spec
+                    .containers[0]
+                    .image
+                )
+
+            execution[
+                "final_revision"
+            ] = final_revision
+
+            execution[
+                "final_image"
+            ] = final_image
+
+            if final_image != target_image:
+                return {
+                    "success": False,
+                    "runbook": self.name,
+                    "deployment": deployment_name,
+                    "execution": execution,
+                    "rollout": rollout,
+                    "verification": None,
+                    "reconciliation": {
+                        "status": "RollbackTargetMismatch",
+                        "target_revision": target_revision,
+                        "final_revision": final_revision,
+                        "target_image": target_image,
+                        "final_image": final_image,
+                        "message": (
+                            "The Deployment did not end on "
+                            "the expected previous revision."
+                        ),
+                    },
                 }
 
             verification = self.verify_sre_api()
@@ -280,19 +315,9 @@ class RollbackSreApiRunbook(Runbook):
                 ),
                 "runbook": self.name,
                 "deployment": deployment_name,
-                "execution": {
-                    "status": "started",
-                    "current_revision": (
-                        current_revision
-                    ),
-                    "target_revision": (
-                        previous_revision
-                    ),
-                    "target_replica_set": (
-                        previous.metadata.name
-                    ),
-                },
+                "execution": execution,
                 "rollout": rollout,
+                "reconciliation": None,
                 "verification": verification,
             }
 
@@ -304,5 +329,16 @@ class RollbackSreApiRunbook(Runbook):
                 "error": (
                     "Unable to rollback sre-api deployment: "
                     f"HTTP {exc.status}: {exc.reason}"
+                ),
+            }
+
+        except Exception as exc:
+            return {
+                "success": False,
+                "runbook": self.name,
+                "deployment": deployment_name,
+                "error": (
+                    "Unexpected error during "
+                    f"rollback: {exc}"
                 ),
             }
