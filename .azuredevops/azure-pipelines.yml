@@ -1209,10 +1209,15 @@ stages:
             --set-string azure.analyserClientId="$(analyserClientId)" `
             --set metrics.enabled=true `
             --set-string collector.webhookToken="$env:COLLECTOR_WEBHOOK_TOKEN" `
+            --force-conflicts `
             --wait `
             --timeout 10m
 
-          Write-Host "Helm deployment completed successfully."
+           if ($LASTEXITCODE -ne 0) {
+             throw "Helm deployment failed with exit code $LASTEXITCODE."
+           }
+
+           Write-Host "Helm deployment completed successfully."  
 
       env:
         COLLECTOR_WEBHOOK_TOKEN: $(collectorWebhookToken)
