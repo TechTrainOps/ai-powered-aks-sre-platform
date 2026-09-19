@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from kubernetes.client.exceptions import ApiException
@@ -10,6 +11,9 @@ from .base import Runbook
 DEPLOYMENT_NAME = "sre-api"
 MIN_REPLICAS = 1
 MAX_REPLICAS = 5
+
+RECONCILIATION_TIMEOUT_SECONDS = 30
+RECONCILIATION_POLL_SECONDS = 3
 
 
 class ScaleSreApiRunbook(Runbook):
@@ -118,21 +122,32 @@ class ScaleSreApiRunbook(Runbook):
                 },
             )
 
-            rollout = self.wait_for_rollout()
+            actual_replicas = current_replicas
 
-            final_deployment = (
-                self.apps_api
-                .read_namespaced_deployment(
-                    name=deployment_name,
-                    namespace=self.namespace,
+            deadline = (
+                time.time()
+                + RECONCILIATION_TIMEOUT_SECONDS
+            )
+
+            while time.time() < deadline:
+                final_deployment = (
+                    self.apps_api
+                    .read_namespaced_deployment(
+                        name=deployment_name,
+                        namespace=self.namespace,
+                    )
                 )
-            )
 
-            actual_replicas = (
-                final_deployment.spec.replicas or 0
-            )
+                actual_replicas = (
+                    final_deployment.spec.replicas or 0
+                )
 
-            verification = self.verify_sre_api()
+                if actual_replicas == replicas:
+                    break
+
+                time.sleep(
+                    RECONCILIATION_POLL_SECONDS
+                )
 
             execution = {
                 "status": "started",
@@ -158,9 +173,11 @@ class ScaleSreApiRunbook(Runbook):
                             "have reconciled the replica count."
                         ),
                     },
-                    "rollout": rollout,
-                    "verification": verification,
+                    "rollout": None,
+                    "verification": None,
                 }
+
+            rollout = self.wait_for_rollout()
 
             if not rollout.get("success"):
                 return {
@@ -170,8 +187,10 @@ class ScaleSreApiRunbook(Runbook):
                     "execution": execution,
                     "reconciliation": None,
                     "rollout": rollout,
-                    "verification": verification,
+                    "verification": None,
                 }
+
+            verification = self.verify_sre_api()
 
             return {
                 "success": verification.get(
